@@ -278,10 +278,23 @@ router.post("/zapi", async (req: Request, res: Response) => {
 
     const payload = req.body as ZAPIPayload;
 
-    if (payload.fromMe) return;
+    console.log("[Webhook] payload recebido:", JSON.stringify({
+      fromMe: payload.fromMe,
+      isGroup: payload.isGroup,
+      phone: payload.phone,
+      chatId: payload.chatId,
+      messageId: payload.messageId,
+      text: payload.text?.message?.slice(0, 50),
+      GRUPO_FINANCEIRO_ID: process.env.GRUPO_FINANCEIRO_ID,
+    }));
+
+    if (payload.fromMe) { console.log("[Webhook] ignorado: fromMe"); return; }
 
     const grupoId = process.env.GRUPO_FINANCEIRO_ID;
-    if (grupoId && payload.phone !== grupoId && payload.chatId !== grupoId) return;
+    if (grupoId && payload.phone !== grupoId && payload.chatId !== grupoId) {
+      console.log("[Webhook] ignorado: não é o grupo financeiro. phone:", payload.phone, "chatId:", payload.chatId, "grupoId:", grupoId);
+      return;
+    }
 
     const messageId = payload.messageId;
     if (!messageId) return;
