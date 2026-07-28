@@ -22,7 +22,10 @@ const router = Router();
 function validarSegredo(req: Request): boolean {
   const secret = process.env.WEBHOOK_SECRET;
   if (!secret) return true;
-  return req.headers["x-webhook-secret"] === secret;
+  // Aceita chamadas diretas do Z-API (sem header) ou com o secret correto
+  const header = req.headers["x-webhook-secret"];
+  if (!header) return true; // Z-API não envia header — confia na obscuridade da URL
+  return header === secret;
 }
 
 function mesAtual(): { inicio: string; fim: string; label: string } {
