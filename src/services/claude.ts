@@ -145,6 +145,8 @@ Schema quando for documento financeiro:
     {
       "descricao": string,
       "valor": number,
+      "quantidade": number | null,  // ex: 10 (kg, un, litros)
+      "unidade": string | null,     // ex: "kg", "un", "l"
       "tipo_lancamento": "receita" | "despesa",
       "categoria_sugerida": string | null,
       "confianca": "alta" | "media" | "baixa"
@@ -160,6 +162,14 @@ Regras de agrupamento:
 - valor sempre número sem formatação (ex: 1500.90)
 - valor_total_documento: valor total final mostrado no documento (campo "Total", "Total a Pagar", "Valor Total"). Se não visível, null. A SOMA dos itens deve ser igual a esse total — se não bater, revise os valores dos itens.
 - Atenção ao formato de data em cupons térmicos brasileiros: o formato é DD/MM/AAAA. Exemplo: 01/08/2026 = dia 01 de agosto de 2026.
+- QUANTIDADE E UNIDADE (importante para rastreamento de variação de preço):
+  * Se o documento mostrar quantidade explícita (ex: "10kg", "5 unidades", "2L"), EXTRAIA:
+    - quantidade: número (ex: 10, 5, 2)
+    - unidade: texto (ex: "kg", "un", "l")
+  * Exemplo: "Tomate 10kg R$ 100" → quantidade: 10, unidade: "kg", valor: 100
+  * Se não houver quantidade, deixe ambos null
+  * Quando agrupa por categoria (ex: 10kg + 5kg de legumes diferentes), SOME as quantidades:
+    - Exemplo: "10kg alface + 5kg tomate" → quantidade: 15, unidade: "kg" (mesmo grupo FLV)
 
 ATENÇÃO — iFood Pago vs Tarifa iFood:
 - "iFood Pago" / "IFOOD PAGO IP" é uma conta digital (banco) que restaurantes usam para fazer PIX e transferências. NÃO é taxa de plataforma.
