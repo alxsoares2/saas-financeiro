@@ -12,7 +12,10 @@ function getClient(): any {
     const url = process.env.SUPABASE_URL!;
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY!;
     if (!url || !key) throw new Error("SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY são obrigatórios");
-    _client = createClient(url, key, { db: { schema: "financeiro" } });
+    // Schema configurável por env — cada loja (Mano, Basílico) usa um schema separado.
+    // Default "financeiro" mantém o Mano funcionando sem mudar nada.
+    const schema = process.env.SUPABASE_SCHEMA || "financeiro";
+    _client = createClient(url, key, { db: { schema } });
   }
   return _client;
 }
