@@ -11,13 +11,19 @@ const GRUPOS_CUSTOS_VARIAVEIS: GrupoDRE[] = [
   "impostos_variaveis",
 ];
 
-// Grupos que compõem as Despesas Fixas
+// Grupos que compõem as Despesas Fixas (ordem da planilha ENG-DRE ARTS)
 const GRUPOS_DESPESAS_FIXAS: GrupoDRE[] = [
   "ocupacao",
   "utilidades",
   "despesas_admin",
   "marketing",
+  "manutencao",
+  "despesas_aquisicao",
+  "servicos_terceirizados",
   "pessoal_fixo",
+  "retirada_socios",
+  "renegociacoes_dividas",
+  "despesas_financeiras",
 ];
 
 type GrupoMap = Record<GrupoDRE, LinhasDRE[]>;
@@ -38,7 +44,13 @@ export async function calcularDRE(inicio: string, fim: string): Promise<DRE> {
     utilidades: [],
     despesas_admin: [],
     marketing: [],
+    manutencao: [],
+    despesas_aquisicao: [],
+    servicos_terceirizados: [],
     pessoal_fixo: [],
+    retirada_socios: [],
+    renegociacoes_dividas: [],
+    despesas_financeiras: [],
   };
 
   for (const l of lancamentos) {
@@ -111,7 +123,13 @@ export async function calcularDRE(inicio: string, fim: string): Promise<DRE> {
     utilidades: comPct(grupos.utilidades),
     despesas_admin: comPct(grupos.despesas_admin),
     marketing: comPct(grupos.marketing),
+    manutencao: comPct(grupos.manutencao),
+    despesas_aquisicao: comPct(grupos.despesas_aquisicao),
+    servicos_terceirizados: comPct(grupos.servicos_terceirizados),
     pessoal_fixo: comPct(grupos.pessoal_fixo),
+    retirada_socios: comPct(grupos.retirada_socios),
+    renegociacoes_dividas: comPct(grupos.renegociacoes_dividas),
+    despesas_financeiras: comPct(grupos.despesas_financeiras),
     total_despesas_fixas,
     total_despesas_fixas_pct,
     resultado_operacional,
@@ -156,70 +174,88 @@ function sinalBrl(value: number): string {
 }
 
 function linhasTexto(linhas: LinhasDRE[], base: number): string {
-  if (linhas.length === 0) return "  —";
-  return linhas
-    .filter((l) => l.valor !== 0)
+  const comValor = linhas.filter((l) => l.valor !== 0);
+  if (comValor.length === 0) return "";
+  return comValor
     .map((l) => {
       const p = base > 0 ? ` (${((l.valor / base) * 100).toFixed(1)}%)` : "";
-      return `  ${l.categoria}: R$ ${brl(l.valor)}${p}`;
+      return `  • ${l.categoria}: R$ ${brl(l.valor)}${p}`;
     })
     .join("\n");
+}
+
+// Retorna bloco somente se tiver lançamentos; omite subcategorias vazias
+function bloco(titulo: string, linhas: LinhasDRE[], base: number): string | null {
+  const corpo = linhasTexto(linhas, base);
+  if (!corpo) return null;
+  return `${titulo}\n${corpo}`;
+}
+
+// Linha de total por sub-grupo de Despesas Fixas
+function linhaGrupo(
+  label: string,
+  linhas: LinhasDRE[],
+  base: number
+): string | null {
+  const total = linhas.reduce((s, l) => s + l.valor, 0);
+  if (total === 0) return null;
+  const p = base > 0 ? ` (${((total / base) * 100).toFixed(1)}%)` : "";
+  return `  ${label}: R$ ${brl(total)}${p}`;
 }
 
 export function formatarDREWhatsApp(dre: DRE): string {
   const { periodo, receita_liquida } = dre;
 
-  const bloco = (
-    titulo: string,
-    linhas: LinhasDRE[],
-    total?: number,
-    totalLabel?: string
-  ): string => {
-    const corpo = linhasTexto(linhas, receita_liquida);
-    const rodape =
-      total !== undefined
-        ? `  *${totalLabel ?? "Total"}: R$ ${brl(total)}*`
-        : "";
-    return [titulo, corpo, rodape].filter(Boolean).join("\n");
-  };
+  const receitaLinhas = linhasTexto(dre.receita_bruta, receita_liquida);
+  const deducoesLinhas = linhasTexto(dre.deducoes_receita, receita_liquida);
 
-  const linhas: string[] = [
+  // Custos variáveis — mostra categorias individuais por sub-grupo
+  const subCustosVariaveis = [
+    bloco("_Matéria-Prima (CMV):_", dre.cmv, receita_liquida),
+    bloco("_Mat. Venda Direta:_", dre.materiais_venda_direta, receita_liquida),
+    bloco("_Mat. de Apoio:_", dre.materiais_apoio, receita_liquida),
+    bloco("_CMO Eventual:_", dre.cmo_eventual, receita_liquida),
+    bloco("_Tarifas Cartão/Delivery:_", dre.tarifas_cartao, receita_liquida),
+    bloco("_Impostos Variáveis:_", dre.impostos_variaveis, receita_liquida),
+  ].filter(Boolean) as string[];
+
+  // Despesas fixas — mostra categorias individuais por sub-grupo (igual ao CMV)
+  const linhasFixas = [
+    bloco("_Ocupação:_", dre.ocupacao, receita_liquida),
+    bloco("_Utilidades:_", dre.utilidades, receita_liquida),
+    bloco("_Pessoal Fixo:_", dre.pessoal_fixo, receita_liquida),
+    bloco("_Serv. Terceirizados:_", dre.servicos_terceirizados, receita_liquida),
+    bloco("_Administrativas:_", dre.despesas_admin, receita_liquida),
+    bloco("_Marketing:_", dre.marketing, receita_liquida),
+    bloco("_Manutenção:_", dre.manutencao, receita_liquida),
+    bloco("_Aquisições:_", dre.despesas_aquisicao, receita_liquida),
+    bloco("_Retirada de Sócios:_", dre.retirada_socios, receita_liquida),
+    bloco("_Renegociações:_", dre.renegociacoes_dividas, receita_liquida),
+    bloco("_Desp. Financeiras:_", dre.despesas_financeiras, receita_liquida),
+  ].filter(Boolean) as string[];
+
+  const linhas: (string | null)[] = [
     `*DRE OPERACIONAL — ${periodo.inicio} a ${periodo.fim}*`,
     "",
-    // ── Receita ────────────────────────────────────
     "*RECEITA BRUTA*",
-    linhasTexto(dre.receita_bruta, receita_liquida),
+    receitaLinhas || "  —",
     `  *Total Bruto: R$ ${brl(dre.total_receita_bruta)}*`,
-    "",
-    bloco("*(-) Deduções*", dre.deducoes_receita),
+    deducoesLinhas ? `\n*(-) Deduções*\n${deducoesLinhas}` : null,
     "",
     `*= RECEITA LÍQUIDA: R$ ${brl(receita_liquida)}*`,
     "",
-    // ── Custos Variáveis ───────────────────────────
     "*(-) CUSTOS VARIÁVEIS*",
-    bloco("_Matéria-Prima (CMV):_", dre.cmv),
-    bloco("_Materiais de Venda Direta:_", dre.materiais_venda_direta),
-    bloco("_Materiais de Apoio:_", dre.materiais_apoio),
-    bloco("_CMO Eventual:_", dre.cmo_eventual),
-    bloco("_Tarifas de Cartão/Delivery:_", dre.tarifas_cartao),
-    bloco("_Impostos Variáveis:_", dre.impostos_variaveis),
-    `  *Total Custos Variáveis: R$ ${brl(dre.total_custos_variaveis)} (${dre.total_custos_variaveis_pct}%)*`,
+    subCustosVariaveis.length > 0 ? subCustosVariaveis.join("\n") : "  —",
+    `  *Total: R$ ${brl(dre.total_custos_variaveis)} (${dre.total_custos_variaveis_pct}%)*`,
     "",
-    // ── Margem de Contribuição ─────────────────────
     `*= MARGEM DE CONTRIBUIÇÃO: ${sinalBrl(dre.margem_contribuicao)} (${dre.margem_contribuicao_pct}%)*`,
     "",
-    // ── Despesas Fixas ─────────────────────────────
     "*(-) DESPESAS FIXAS*",
-    bloco("_Ocupação:_", dre.ocupacao),
-    bloco("_Utilidades:_", dre.utilidades),
-    bloco("_Administrativas:_", dre.despesas_admin),
-    bloco("_Marketing:_", dre.marketing),
-    bloco("_Pessoal Fixo:_", dre.pessoal_fixo),
-    `  *Total Despesas Fixas: R$ ${brl(dre.total_despesas_fixas)} (${dre.total_despesas_fixas_pct}%)*`,
+    linhasFixas.length > 0 ? linhasFixas.join("\n") : "  —",
+    `  *Total: R$ ${brl(dre.total_despesas_fixas)} (${dre.total_despesas_fixas_pct}%)*`,
     "",
-    // ── Resultado ──────────────────────────────────
     `*= RESULTADO OPERACIONAL: ${sinalBrl(dre.resultado_operacional)} (${dre.resultado_operacional_pct}%)*`,
   ];
 
-  return linhas.filter((l) => l !== undefined).join("\n");
+  return linhas.filter((l) => l !== null).join("\n");
 }

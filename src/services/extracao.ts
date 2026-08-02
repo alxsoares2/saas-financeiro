@@ -1,18 +1,17 @@
-import { ZAPIPayload, ExtractedDocument } from "../types.js";
+import { ZAPIPayload, ExtractedDocument, ExtracaoMultipla } from "../types.js";
 import { downloadMedia } from "./zapi.js";
-import { extractFromImage, extractFromPDF, extractFromText } from "./claude.js";
+import { extractFromImage, extractFromPDF, extractFromText, extractMultiFromImage, extractMultiFromPDF } from "./claude.js";
 import { extractFromNFeXml } from "./xml-nfe.js";
 import { uploadDocument } from "../db/supabase.js";
 
 export interface ExtracaoResult {
-  extracted: ExtractedDocument;
+  // Entrada única — texto, XML NF-e
+  extracted?: ExtractedDocument;
+  // Múltiplos itens agrupados por categoria — imagens, PDFs
+  multipla?: ExtracaoMultipla;
   urlArquivo?: string;
-  rawBuffer?: Buffer;
-  mimeType?: string;
-  filename?: string;
 }
 
-// Detecta se o buffer de um documento é um XML de NF-e
 function isNFeXml(buffer: Buffer, mimeType: string): boolean {
   if (mimeType === "text/xml" || mimeType === "application/xml") return true;
   const sample = buffer.toString("utf-8", 0, 200);
@@ -20,57 +19,54 @@ function isNFeXml(buffer: Buffer, mimeType: string): boolean {
 }
 
 export async function processar(payload: ZAPIPayload): Promise<ExtracaoResult | null> {
-  // ── Mensagem de texto ─────────────────────────────────────────────────────
+  // ── Texto livre ───────────────────────────────────────────────────────────
   if (payload.text?.message) {
     const msg = payload.text.message.trim();
-
-    // Comandos de consulta não precisam de extração (tratados na rota)
-    const comandos = /^(dre|pendentes|ajuda|help)\b/i;
-    if (comandos.test(msg)) return null;
+    if (/^(dre|pendentes|ajuda|help)\b/i.test(msg)) return null;
 
     const extracted = await extractFromText(msg);
+    if (!extracted) return null;
     return { extracted };
   }
 
-  // ── Imagem ────────────────────────────────────────────────────────────────
-  if (payload.image?.url) {
-    const buffer = await downloadMedia(payload.image.url);
-    const mimeType = (payload.image.mimeType || "image/jpeg") as
-      | "image/jpeg"
-      | "image/png"
-      | "image/webp"
-      | "image/gif";
+  // ── Imagem — usa extração multi-item ─────────────────────────────────────
+  const imageUrl = payload.image?.imageUrl ?? payload.image?.url;
+  if (imageUrl) {
+    const buffer = await downloadMedia(imageUrl);
+    const mimeType = (payload.image!.mimeType || "image/jpeg") as
+      | "image/jpeg" | "image/png" | "image/webp" | "image/gif";
     const filename = `img_${payload.messageId}.jpg`;
-
     const urlArquivo = await uploadDocument(buffer, filename, mimeType);
-    const extracted = await extractFromImage(buffer, mimeType);
 
-    return { extracted, urlArquivo, rawBuffer: buffer, mimeType, filename };
+    const multipla = await extractMultiFromImage(buffer, mimeType, payload.image!.caption);
+    if (!multipla) return null;
+    return { multipla, urlArquivo };
   }
 
-  // ── Documento (PDF, XML, etc.) ────────────────────────────────────────────
-  if (payload.document?.url) {
-    const buffer = await downloadMedia(payload.document.url);
-    const mimeType = payload.document.mimeType || "application/octet-stream";
-    const filename =
-      payload.document.fileName ??
-      payload.document.title ??
-      `doc_${payload.messageId}`;
-
+  // ── Documento (PDF, XML NF-e) ─────────────────────────────────────────────
+  const documentUrl = payload.document?.documentUrl ?? payload.document?.url;
+  if (documentUrl) {
+    const buffer = await downloadMedia(documentUrl);
+    const mimeType = payload.document!.mimeType || "application/octet-stream";
+    const filename = payload.document!.fileName ?? payload.document!.title ?? `doc_${payload.messageId}`;
     const urlArquivo = await uploadDocument(buffer, filename, mimeType);
 
-    let extracted: ExtractedDocument;
-
     if (isNFeXml(buffer, mimeType)) {
-      extracted = await extractFromNFeXml(buffer.toString("utf-8"));
-    } else if (mimeType === "application/pdf") {
-      extracted = await extractFromPDF(buffer);
-    } else {
-      // Tenta como imagem se for tipo de imagem desconhecido
-      extracted = await extractFromImage(buffer, "image/jpeg");
+      const extracted = await extractFromNFeXml(buffer.toString("utf-8"));
+      if (!extracted) return null;
+      return { extracted, urlArquivo };
     }
 
-    return { extracted, urlArquivo, rawBuffer: buffer, mimeType, filename };
+    if (mimeType === "application/pdf") {
+      const multipla = await extractMultiFromPDF(buffer);
+      if (!multipla) return null;
+      return { multipla, urlArquivo };
+    }
+
+    // Outros formatos — tenta como imagem single-item
+    const extracted = await extractFromImage(buffer, "image/jpeg");
+    if (!extracted) return null;
+    return { extracted, urlArquivo };
   }
 
   return null;

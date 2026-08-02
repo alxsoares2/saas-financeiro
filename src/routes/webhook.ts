@@ -1,9 +1,11 @@
 import { Router, Request, Response } from "express";
-import { ZAPIPayload } from "../types.js";
+import { ZAPIPayload, ExtracaoMultipla } from "../types.js";
 import { processar } from "../services/extracao.js";
 import { calcularDRE, formatarDREWhatsApp, formatarResumoWhatsApp } from "../services/dre.js";
+import { gerarAnalise } from "../services/claude.js";
+import { gerarPdfDRE } from "../services/pdf-dre.js";
 import { inferirGrupoDre } from "../services/grupo-dre.js";
-import { sendTextMessage } from "../services/zapi.js";
+import { sendTextMessage, sendDocumentMessage } from "../services/zapi.js";
 import {
   isMessageProcessed,
   markMessageProcessed,
@@ -13,9 +15,45 @@ import {
   getLancamentoPorCodigo,
   marcarComoPago,
   getResumoMes,
+  buscarPendentesCorrespondentes,
+  atualizarDataEmissao,
+  excluirLancamento,
+  getLancamentosRecentes,
+  atualizarCategoria,
+  buscarExato,
+  encontrarCombinacoes,
+  buscarFuzzy,
+  marcarComoPagoParcial,
+  criarCombinacaoConfirmacao,
+  confirmarCombinacao,
+  cancelarCombinacao,
+  criarNaoConciliado,
+  listarNaoConciliados,
+  conciliarNaoConciliado,
+  descartarNaoConciliado,
 } from "../db/supabase.js";
 
 const router = Router();
+
+// ── Estado de confirmações pendentes (in-memory) ──────────────────────────────
+
+interface PendingConfirmation {
+  multipla: ExtracaoMultipla;
+  urlArquivo?: string;
+  messageId: string;
+}
+const pendingConfirmations = new Map<string, PendingConfirmation>();
+
+// Determina status baseado no tipo de documento
+function determinarStatusDocumento(tipoDocumento: string): { status: "pendente" | "pago"; dataPagamento?: string } {
+  const hoje = new Date().toISOString().substring(0, 10);
+  // Documentos de compra já foram pagos no ato
+  if (["comprovante", "nota_fiscal", "recibo"].includes(tipoDocumento)) {
+    return { status: "pago", dataPagamento: hoje };
+  }
+  // Boletos e faturas são pendentes
+  return { status: "pendente" };
+}
 
 // ── Utilitários ───────────────────────────────────────────────────────────────
 
@@ -94,16 +132,261 @@ function codigoCurto(id: string): string {
   return id.replace(/-/g, "").substring(0, 6).toUpperCase();
 }
 
+// ── Confirmação de extração com dúvida ───────────────────────────────────────
+
+function precisaConfirmacao(multipla: ExtracaoMultipla): string | null {
+  const soma = multipla.itens.reduce((s, i) => s + i.valor, 0);
+  const totalDoc = multipla.valor_total_documento;
+
+  if (totalDoc != null && Math.abs(soma - totalDoc) > 0.50) {
+    return `soma dos itens (R$ ${brl(soma)}) ≠ total no documento (R$ ${brl(totalDoc)})`;
+  }
+  if (!multipla.data_emissao) {
+    return "data de emissão não identificada";
+  }
+  return null;
+}
+
+async function sendConfirmacaoPendente(chatId: string, multipla: ExtracaoMultipla, motivo: string): Promise<void> {
+  const soma = multipla.itens.reduce((s, i) => s + i.valor, 0);
+  const totalDoc = multipla.valor_total_documento;
+
+  const linhasItens = multipla.itens
+    .map((i) => `  • ${i.descricao}: R$ ${brl(i.valor)}`)
+    .join("\n");
+
+  const linhas: (string | null)[] = [
+    `⚠️ *Analisei o documento, mas tenho dúvida:*`,
+    `_${motivo}_`,
+    ``,
+    multipla.fornecedor ? `🏪 ${multipla.fornecedor}` : null,
+    multipla.data_emissao ? `📅 Data: ${formatarData(multipla.data_emissao)}` : `📅 Data: *não identificada*`,
+    ``,
+    `Itens identificados:`,
+    linhasItens,
+    `  Soma: *R$ ${brl(soma)}*`,
+    totalDoc != null ? `  Total no documento: R$ ${brl(totalDoc)}` : null,
+    ``,
+    `Responda *sim* para registrar assim mesmo ou *não* para cancelar.`,
+  ];
+
+  await sendTextMessage(chatId, linhas.filter(Boolean).join("\n"));
+}
+
+async function registrarMultipla(
+  chatId: string,
+  multipla: ExtracaoMultipla,
+  urlArquivo: string | undefined,
+  messageId: string
+): Promise<void> {
+  const fornecedor = multipla.fornecedor ?? "Documento";
+  const totalGeral = multipla.itens.reduce((s, i) => s + i.valor, 0);
+  const { status, dataPagamento } = determinarStatusDocumento(multipla.tipo_documento);
+
+  const criados: { descricao: string; valor: number; id: string; baixaConfianca: boolean }[] = [];
+  for (const item of multipla.itens) {
+    let categoriaId: string | undefined;
+    if (item.categoria_sugerida) {
+      try {
+        const grupoDre = inferirGrupoDre(item.categoria_sugerida, item.tipo_lancamento);
+        const cat = await findOrCreateCategoria(item.categoria_sugerida, grupoDre, item.tipo_lancamento);
+        categoriaId = cat.id;
+      } catch { /* ignora */ }
+    }
+    const lancamento = await createLancamento(
+      {
+        tipo_documento: multipla.tipo_documento as any,
+        fornecedor: multipla.fornecedor,
+        cnpj_cpf: multipla.cnpj_cpf,
+        descricao: item.descricao,
+        valor_total: item.valor,
+        data_emissao: multipla.data_emissao,
+        data_vencimento: multipla.data_vencimento,
+        categoria_sugerida: item.categoria_sugerida,
+        tipo_lancamento: item.tipo_lancamento,
+        confianca: item.confianca,
+      },
+      `${messageId}-${criados.length}`,
+      urlArquivo,
+      categoriaId,
+      status,
+      dataPagamento
+    );
+    criados.push({ descricao: item.descricao, valor: item.valor, id: lancamento.id, baixaConfianca: item.confianca !== "alta" });
+  }
+
+  const linhasItens = criados
+    .map((c) => `  • ${c.descricao}: R$ ${brl(c.valor)} [${codigoCurto(c.id)}]${c.baixaConfianca ? " ⚠️" : ""}`)
+    .join("\n");
+
+  const temBaixaConfianca = criados.some((c) => c.baixaConfianca);
+  const confirmacao = [
+    `📋 *${fornecedor}* — R$ ${brl(totalGeral)}`,
+    `${criados.length} lançamento${criados.length > 1 ? "s" : ""} criado${criados.length > 1 ? "s" : ""}:`,
+    "",
+    linhasItens,
+    temBaixaConfianca ? "\n⚠️ Itens com ⚠️ têm confiança baixa — confira os valores." : null,
+    multipla.data_emissao ? `📅 Emissão: ${formatarData(multipla.data_emissao)}` : null,
+    multipla.data_vencimento ? `⏰ Vencimento: ${formatarData(multipla.data_vencimento)}` : null,
+  ].filter(Boolean).join("\n");
+
+  await sendTextMessage(chatId, confirmacao);
+}
+
 // ── Handlers dos comandos ─────────────────────────────────────────────────────
 
+function periodoAnterior(inicio: string, fim: string): { inicio: string; fim: string } {
+  const [ano, mes] = inicio.split("-").map(Number);
+  const mesAnt = mes === 1 ? 12 : mes - 1;
+  const anoAnt = mes === 1 ? ano - 1 : ano;
+  const mesStr = String(mesAnt).padStart(2, "0");
+  const ultimoDia = new Date(anoAnt, mesAnt, 0).getDate();
+  return {
+    inicio: `${anoAnt}-${mesStr}-01`,
+    fim: `${anoAnt}-${mesStr}-${String(ultimoDia).padStart(2, "0")}`,
+  };
+}
+
+function dreParaTexto(dre: import("../types.js").DRE, label: string): string {
+  const linhas: string[] = [`=== ${label.toUpperCase()} ===`];
+  const add = (cat: string, val: number) => {
+    if (val > 0.01) linhas.push(`${cat}: R$ ${brl(val)}`);
+  };
+
+  add("Receita Bruta", dre.total_receita_bruta);
+  add("Receita Líquida", dre.receita_liquida);
+  linhas.push(`Custos Variáveis Total: R$ ${brl(dre.total_custos_variaveis)} (${dre.total_custos_variaveis_pct}% da receita)`);
+  [...dre.cmv, ...dre.materiais_venda_direta, ...dre.materiais_apoio, ...dre.cmo_eventual, ...dre.tarifas_cartao, ...dre.impostos_variaveis]
+    .forEach((l) => add(`  ${l.categoria}`, l.valor));
+  add("Margem de Contribuição", dre.margem_contribuicao);
+  linhas.push(`Despesas Fixas Total: R$ ${brl(dre.total_despesas_fixas)} (${dre.total_despesas_fixas_pct}% da receita)`);
+  [...dre.ocupacao, ...dre.utilidades, ...dre.pessoal_fixo, ...dre.despesas_admin, ...dre.marketing, ...dre.manutencao, ...dre.despesas_financeiras, ...dre.servicos_terceirizados, ...dre.retirada_socios]
+    .forEach((l) => add(`  ${l.categoria}`, l.valor));
+  linhas.push(`Resultado Operacional: R$ ${brl(dre.resultado_operacional)} (${dre.resultado_operacional_pct}%)`);
+  return linhas.join("\n");
+}
+
+async function handleCategoria(chatId: string, msg: string): Promise<void> {
+  const match = msg.match(/^categoria\s+([A-Za-z0-9]{4,8})\s+(.+)$/i);
+  if (!match) {
+    await sendTextMessage(
+      chatId,
+      "Formato: *categoria [código] [nome_da_categoria]*\nExemplo: *categoria ABC123 Salários CLT*"
+    );
+    return;
+  }
+
+  const codigo = match[1].toUpperCase();
+  const categoriaNome = match[2].trim();
+  const lancamento = await getLancamentoPorCodigo(codigo.toLowerCase());
+
+  if (!lancamento) {
+    await sendTextMessage(chatId, `Lançamento *${codigo}* não encontrado.`);
+    return;
+  }
+
+  const grupoDre = inferirGrupoDre(categoriaNome, lancamento.tipo);
+  const categoria = await findOrCreateCategoria(categoriaNome, grupoDre, lancamento.tipo);
+  await atualizarCategoria(lancamento.id, categoria.id);
+
+  await sendTextMessage(
+    chatId,
+    `✅ Categoria atualizada!\n📋 ${lancamento.descricao}\n🏷️ ${categoriaNome}\n_Código: ${codigo}_`
+  );
+}
+
+async function handleCMV(chatId: string, msg: string): Promise<void> {
+  const semCmv = msg.replace(/^cmv\s*/i, "").trim();
+  const periodo = semCmv ? parsePeriodoDRE(`dre ${semCmv}`) : mesAtual();
+
+  if (!periodo) {
+    await sendTextMessage(chatId, "Formato inválido. Use: *cmv* ou *cmv julho*");
+    return;
+  }
+
+  const dre = await calcularDRE(periodo.inicio, periodo.fim);
+  const cmvLinhas = [
+    ...dre.cmv,
+    ...dre.materiais_venda_direta,
+    ...dre.materiais_apoio,
+    ...dre.cmo_eventual,
+    ...dre.tarifas_cartao,
+    ...dre.impostos_variaveis,
+  ];
+
+  const cmvTexto = cmvLinhas
+    .filter((l) => l.valor > 0.01)
+    .map((l) => `  • ${l.categoria}: R$ ${brl(l.valor)} (${l.pct}%)`)
+    .join("\n");
+
+  const linhas = [
+    `*CMV — ${periodo.label}*`,
+    "",
+    cmvTexto || "  —",
+    "",
+    `*Total: R$ ${brl(dre.total_custos_variaveis)} (${dre.total_custos_variaveis_pct}% da receita)*`,
+  ];
+
+  await sendTextMessage(chatId, linhas.join("\n"));
+}
+
+async function handleAnalise(chatId: string, msg: string): Promise<void> {
+  const semAnalise = msg.replace(/^analise\s*/i, "").trim();
+  const periodo = semAnalise
+    ? parsePeriodoDRE(`dre ${semAnalise}`)
+    : mesAtual();
+
+  if (!periodo) {
+    await sendTextMessage(chatId, "Formato inválido. Use: *analise* ou *analise julho*");
+    return;
+  }
+
+  await sendTextMessage(chatId, "🔍 Analisando as contas, aguarde...");
+
+  const ant = periodoAnterior(periodo.inicio, periodo.fim);
+  const [dre, dreAnt] = await Promise.all([
+    calcularDRE(periodo.inicio, periodo.fim),
+    calcularDRE(ant.inicio, ant.fim),
+  ]);
+
+  const textoAtual = dreParaTexto(dre, periodo.label);
+  const textoAnt = dreParaTexto(dreAnt, ant.inicio.slice(0, 7));
+
+  const analise = await gerarAnalise(textoAtual, textoAnt);
+  await sendTextMessage(chatId, analise);
+}
+
 async function handleDRE(chatId: string, msg: string): Promise<void> {
-  const periodo = parsePeriodoDRE(msg);
+  const pdf = /\bpdf\b/i.test(msg);
+  // Remove "pdf" da string antes de parsear o período
+  const semPdf = msg.replace(/\bpdf\b/i, "").trim();
+  const periodo = parsePeriodoDRE(semPdf || "dre");
   if (!periodo) {
     await sendTextMessage(chatId, "Formato inválido. Use: *dre julho* ou *dre 2024-07*");
     return;
   }
-  const dre = await calcularDRE(periodo.inicio, periodo.fim);
-  await sendTextMessage(chatId, formatarDREWhatsApp(dre));
+
+  if (!pdf) {
+    const dre = await calcularDRE(periodo.inicio, periodo.fim);
+    await sendTextMessage(chatId, formatarDREWhatsApp(dre));
+    return;
+  }
+
+  // PDF com comparativo do mês anterior
+  await sendTextMessage(chatId, "⏳ Gerando PDF, aguarde...");
+  try {
+    const ant = periodoAnterior(periodo.inicio, periodo.fim);
+    const [dre, dreAnt] = await Promise.all([
+      calcularDRE(periodo.inicio, periodo.fim),
+      calcularDRE(ant.inicio, ant.fim),
+    ]);
+    const pdfBuffer = await gerarPdfDRE(dre, dreAnt);
+    const mesLabel = periodo.inicio.slice(0, 7); // YYYY-MM
+    await sendDocumentMessage(chatId, pdfBuffer, `DRE-${mesLabel}.pdf`);
+  } catch (err) {
+    console.error("[PDF] erro:", err);
+    await sendTextMessage(chatId, "❌ Erro ao gerar o PDF. Tente novamente.");
+  }
 }
 
 async function handleResumo(chatId: string): Promise<void> {
@@ -213,10 +496,438 @@ async function handlePago(chatId: string, msg: string): Promise<void> {
   );
 }
 
+async function handleRecentes(chatId: string): Promise<void> {
+  const recentes = await getLancamentosRecentes(8);
+  if (recentes.length === 0) {
+    await sendTextMessage(chatId, "Nenhum lançamento encontrado.");
+    return;
+  }
+
+  const linhas = recentes.map((l) => {
+    const codigo = codigoCurto(l.id);
+    const cat = (l as any).categoria_nome ?? l.descricao;
+    const valor = `R$ ${brl(Number(l.valor))}`;
+    const status = l.status === "pago" ? "✅" : "⏳";
+    const data = formatarData(l.data_emissao);
+    return `${status} [${codigo}] ${cat} — ${valor} — ${data}`;
+  });
+
+  await sendTextMessage(
+    chatId,
+    ["*Últimos lançamentos:*", "", ...linhas, "", "_Use *excluir [código]* para remover_"].join("\n")
+  );
+}
+
+async function handleExcluir(chatId: string, msg: string): Promise<void> {
+  const match = msg.match(/^excluir\s+([A-Za-z0-9]{4,8})/i);
+  if (!match) {
+    await sendTextMessage(chatId, "Formato: *excluir [código]*\nExemplo: *excluir 888BBB*");
+    return;
+  }
+
+  const codigo = match[1].toUpperCase();
+  const lancamento = await getLancamentoPorCodigo(codigo.toLowerCase());
+
+  if (!lancamento) {
+    await sendTextMessage(chatId, `Lançamento *${codigo}* não encontrado.`);
+    return;
+  }
+
+  await excluirLancamento(lancamento.id);
+  await sendTextMessage(
+    chatId,
+    `🗑️ *Excluído!*\n📋 ${lancamento.descricao}\n💰 R$ ${brl(Number(lancamento.valor))}\n_Código: ${codigo}_`
+  );
+}
+
+async function handleData(chatId: string, msg: string): Promise<void> {
+  // Formato: data ABC123 29/07/2026
+  const match = msg.match(/^data\s+([A-Za-z0-9]{4,8})\s+(\d{2})\/(\d{2})\/(\d{4})/i);
+  if (!match) {
+    await sendTextMessage(chatId, "Formato: *data [código] DD/MM/AAAA*\nExemplo: *data 888BBB 29/07/2026*");
+    return;
+  }
+
+  const codigo = match[1].toUpperCase();
+  const dataIso = `${match[4]}-${match[3]}-${match[2]}`; // YYYY-MM-DD
+  const lancamento = await getLancamentoPorCodigo(codigo.toLowerCase());
+
+  if (!lancamento) {
+    await sendTextMessage(chatId, `Lançamento *${codigo}* não encontrado.`);
+    return;
+  }
+
+  await atualizarDataEmissao(lancamento.id, dataIso);
+  await sendTextMessage(
+    chatId,
+    `✅ Data corrigida!\n📋 ${lancamento.descricao}\n📅 Emissão: ${formatarData(dataIso)}`
+  );
+}
+
+async function handleConfirmarCombinacao(chatId: string, msg: string): Promise<void> {
+  const match = msg.match(/^confirmar\s+(COMB[A-Z0-9]+)/i);
+  if (!match) {
+    await sendTextMessage(chatId, "Formato: *confirmar [COMB###]*\nExemplo: *confirmar COMB001*");
+    return;
+  }
+
+  const combId = match[1].toUpperCase();
+  const success = await confirmarCombinacao(combId);
+
+  if (success) {
+    await sendTextMessage(
+      chatId,
+      `✅ *Combinação confirmada!*\n${combId}\nTodos os boletos foram marcados como pagos.`
+    );
+  } else {
+    await sendTextMessage(chatId, `Combinação *${combId}* não encontrada.`);
+  }
+}
+
+async function handleCancelarCombinacao(chatId: string, msg: string): Promise<void> {
+  const match = msg.match(/^cancelar\s+(COMB[A-Z0-9]+)/i);
+  if (!match) {
+    await sendTextMessage(chatId, "Formato: *cancelar [COMB###]*\nExemplo: *cancelar COMB001*");
+    return;
+  }
+
+  const combId = match[1].toUpperCase();
+  const success = await cancelarCombinacao(combId);
+
+  if (success) {
+    await sendTextMessage(chatId, `✅ *Combinação cancelada!*\n${combId}`);
+  } else {
+    await sendTextMessage(chatId, `Combinação *${combId}* não encontrada.`);
+  }
+}
+
+async function handleConciliar(chatId: string, msg: string): Promise<void> {
+  const match = msg.match(/^conciliar\s+(NC[A-Z0-9]+)\s+(.+)$/i);
+  if (!match) {
+    await sendTextMessage(
+      chatId,
+      "Formato: *conciliar [NC###] [categoria]*\nExemplo: *conciliar NC001 Materiais de Apoio*"
+    );
+    return;
+  }
+
+  const ncId = match[1].toUpperCase();
+  const categoriaNome = match[2].trim();
+
+  try {
+    const grupoDre = inferirGrupoDre(categoriaNome, "despesa");
+    const categoria = await findOrCreateCategoria(categoriaNome, grupoDre, "despesa");
+    const success = await conciliarNaoConciliado(ncId, categoria.id);
+
+    if (success) {
+      await sendTextMessage(
+        chatId,
+        `✅ *Comprovante conciliado!*\n${ncId}\n🏷️ ${categoriaNome}\nUm novo lançamento foi criado.`
+      );
+    } else {
+      await sendTextMessage(chatId, `Comprovante *${ncId}* não encontrado.`);
+    }
+  } catch (err) {
+    console.error("[Conciliar] Erro:", err);
+    await sendTextMessage(chatId, `❌ Erro ao conciliar. Tente novamente.`);
+  }
+}
+
+async function handleDescartar(chatId: string, msg: string): Promise<void> {
+  const match = msg.match(/^descartar\s+(NC[A-Z0-9]+)/i);
+  if (!match) {
+    await sendTextMessage(chatId, "Formato: *descartar [NC###]*\nExemplo: *descartar NC001*");
+    return;
+  }
+
+  const ncId = match[1].toUpperCase();
+  const success = await descartarNaoConciliado(ncId);
+
+  if (success) {
+    await sendTextMessage(chatId, `✅ *Comprovante descartado!*\n${ncId}`);
+  } else {
+    await sendTextMessage(chatId, `Comprovante *${ncId}* não encontrado.`);
+  }
+}
+
+async function handleListarNaoConciliados(chatId: string): Promise<void> {
+  const ncs = await listarNaoConciliados();
+
+  if (ncs.length === 0) {
+    await sendTextMessage(chatId, "Nenhum comprovante aguardando conciliação.");
+    return;
+  }
+
+  const linhas = ncs.map((nc) => {
+    const data = formatarData(nc.data_recebimento);
+    const fornec = nc.fornecedor || "Desconhecido";
+    return `• ${nc.id}: R$ ${brl(Number(nc.valor))} — ${fornec} (${data})`;
+  });
+
+  await sendTextMessage(
+    chatId,
+    [
+      `*Comprovantes não conciliados:*`,
+      ``,
+      ...linhas,
+      ``,
+      `Para conciliar: *conciliar [NC###] [categoria]*`,
+      `Para descartar: *descartar [NC###]*`,
+    ].join("\n")
+  );
+}
+
+// ── PASSO 1: Matching EXATO ──────────────────────────────────────────────────
+async function matchExato(
+  valor: number,
+  categoriaId?: string,
+  fornecedor?: string
+): Promise<{ lancamento: any; tipo: "exato" } | null> {
+  const lanc = await buscarExato(valor, fornecedor, categoriaId);
+  if (lanc) return { lancamento: lanc, tipo: "exato" };
+  return null;
+}
+
+// ── PASSO 2: Matching COMBINAÇÃO (soma exata de múltiplos) ───────────────────
+async function matchCombinacao(
+  valor: number,
+  categoriaId?: string,
+  fornecedor?: string
+): Promise<{ lancamentos: any[]; tipo: "combinacao"; combId: string } | null> {
+  const pendentes = await encontrarCombinacoes(valor, fornecedor, categoriaId, 8);
+  if (pendentes.length < 2) return null;
+
+  // Busca subconjuntos que somem exatamente o valor (brute force simples)
+  for (let i = 1; i < Math.min(4, pendentes.length); i++) {
+    const combinacoes = combinationsOf(pendentes, i);
+    for (const comb of combinacoes) {
+      const soma = comb.reduce((s, l) => s + l.saldo, 0);
+      if (Math.abs(soma - valor) < 0.01) {
+        const combId = await criarCombinacaoConfirmacao(
+          comb.map((l) => l.id),
+          valor,
+          ""
+        );
+        return { lancamentos: comb, tipo: "combinacao", combId };
+      }
+    }
+  }
+
+  return null;
+}
+
+function combinationsOf<T>(arr: T[], size: number): T[][] {
+  if (size === 1) return arr.map((x) => [x]);
+  const result: T[][] = [];
+  for (let i = 0; i < arr.length - size + 1; i++) {
+    const head = arr[i];
+    const tailCombos = combinationsOf(arr.slice(i + 1), size - 1);
+    for (const tail of tailCombos) {
+      result.push([head, ...tail]);
+    }
+  }
+  return result;
+}
+
+// ── PASSO 3: Matching FUZZY (±25% no saldo) ──────────────────────────────────
+async function matchFuzzy(
+  valor: number,
+  categoriaId?: string,
+  fornecedor?: string
+): Promise<{ lancamentos: any[]; tipo: "fuzzy" } | null> {
+  const fuzzy = await buscarFuzzy(valor, fornecedor, categoriaId, 5);
+  if (fuzzy.length > 0) return { lancamentos: fuzzy, tipo: "fuzzy" };
+  return null;
+}
+
+// ── Matching automático de comprovante com pendente ───────────────────────────
+
+async function handleComprovante(
+  chatId: string,
+  valor: number,
+  categoriaId: string | undefined,
+  categoriaNome: string | undefined,
+  urlArquivo: string | undefined,
+  messageId: string
+): Promise<boolean> {
+  // PASSO 1: Exato
+  const exato = await matchExato(valor, categoriaId);
+  if (exato) {
+    const p = exato.lancamento;
+    await marcarComoPagoParcial(p.id, valor, messageId);
+    const cat = p.categoria_nome ?? p.descricao;
+    const hoje = new Date().toISOString().substring(0, 10);
+
+    const linhas: (string | null)[] = [
+      `✅ *Pagamento registrado!*`,
+      `📋 ${cat}`,
+      `💰 R$ ${brl(valor)}`,
+      p.data_vencimento ? `📅 Vencia: ${formatarData(p.data_vencimento)}` : null,
+      `🔑 Código: *${codigoCurto(p.id)}*`,
+    ];
+
+    const juros = valor - Number(p.valor);
+    if (juros > 0.01) {
+      try {
+        const catJuros = await findOrCreateCategoria("Juros e Multas", "despesas_financeiras", "despesa");
+        await createLancamento(
+          {
+            tipo_documento: "outro",
+            descricao: `Juros/Multa — ${cat}`,
+            valor_total: juros,
+            data_emissao: hoje,
+            tipo_lancamento: "despesa",
+            confianca: "alta",
+          },
+          `${messageId}-juros`,
+          undefined,
+          catJuros.id,
+          "pago",
+          hoje
+        );
+        linhas.push(``, `💸 Juros/Multa: R$ ${brl(juros)}`);
+      } catch (err) {
+        console.error("[Comprovante] Erro ao registrar juros:", err);
+      }
+    }
+
+    await sendTextMessage(chatId, linhas.filter(Boolean).join("\n"));
+    return true;
+  }
+
+  // PASSO 2: Combinação exata
+  const comb = await matchCombinacao(valor, categoriaId);
+  if (comb) {
+    const opcoes = comb.lancamentos
+      .map((l) => {
+        const cat = l.categoria_nome ?? l.descricao;
+        const saldo = `R$ ${brl(l.saldo)}`;
+        return `• ${cat}: ${saldo}`;
+      })
+      .join("\n");
+
+    await sendTextMessage(
+      chatId,
+      [
+        `🔍 *Encontrei uma combinação exata!*`,
+        ``,
+        `Este comprovante (R$ ${brl(valor)}) pode pagar estes ${comb.lancamentos.length} boletos:`,
+        ``,
+        opcoes,
+        ``,
+        `Confirme: *confirmar ${comb.combId}*`,
+        `Ou cancele: *cancelar ${comb.combId}*`,
+      ].join("\n")
+    );
+    return true;
+  }
+
+  // PASSO 3: Fuzzy
+  const fuzzy = await matchFuzzy(valor, categoriaId);
+  if (fuzzy && fuzzy.lancamentos.length === 1) {
+    // Único match fuzzy → auto-baixa
+    const p = fuzzy.lancamentos[0];
+    await marcarComoPagoParcial(p.id, valor, messageId);
+    const cat = p.categoria_nome ?? p.descricao;
+
+    await sendTextMessage(
+      chatId,
+      [
+        `✅ *Pagamento registrado! (aproximado)*`,
+        `📋 ${cat}`,
+        `💰 Comprovante: R$ ${brl(valor)} → Saldo: R$ ${brl(p.saldo)}`,
+        `🔑 Código: *${codigoCurto(p.id)}*`,
+      ].join("\n")
+    );
+    return true;
+  } else if (fuzzy && fuzzy.lancamentos.length > 1) {
+    // Múltiplos matches fuzzy → pede confirmação
+    const opcoes = fuzzy.lancamentos
+      .map((l) => {
+        const cat = l.categoria_nome ?? l.descricao;
+        const diff = Math.abs(valor - l.saldo);
+        const sinal = valor > l.saldo ? "+" : "-";
+        return `• [${codigoCurto(l.id)}] ${cat}: R$ ${brl(l.saldo)} (${sinal}R$ ${brl(diff)})`;
+      })
+      .join("\n");
+
+    await sendTextMessage(
+      chatId,
+      [
+        `🔍 Encontrei ${fuzzy.lancamentos.length} contas com valor próximo:`,
+        ``,
+        opcoes,
+        ``,
+        `_Qual era? Responda com *pago [código]*_`,
+      ].join("\n")
+    );
+    return true;
+  }
+
+  // PASSO 4: Sem match → fila de não conciliados
+  const ncId = await criarNaoConciliado(valor, undefined, categoriaNome, undefined, urlArquivo);
+  await sendTextMessage(
+    chatId,
+    [
+      `❓ *Comprovante não conciliado*`,
+      `Não encontrei nenhum boleto correspondente.`,
+      ``,
+      `💰 R$ ${brl(valor)}`,
+      `🏷️ ${categoriaNome || "Sem categoria"}`,
+      ``,
+      `Para conciliar manualmente, use:`,
+      `*conciliar ${ncId} [nome_categoria]*`,
+      `Exemplo: *conciliar ${ncId} Materiais de Apoio*`,
+      ``,
+      `Ou descartar: *descartar ${ncId}*`,
+    ].join("\n")
+  );
+  return true;
+}
+
 // ── Dispatcher central de comandos ───────────────────────────────────────────
 
 async function handleComando(chatId: string, msg: string): Promise<boolean> {
   const trimmed = msg.trim();
+
+  // Confirmação de extração com dúvida
+  if (/^sim\s*$/i.test(trimmed)) {
+    const pending = pendingConfirmations.get(chatId);
+    if (pending) {
+      pendingConfirmations.delete(chatId);
+      await registrarMultipla(chatId, pending.multipla, pending.urlArquivo, pending.messageId);
+      return true;
+    }
+    return false;
+  }
+
+  if (/^n[aã]o\s*$/i.test(trimmed)) {
+    const pending = pendingConfirmations.get(chatId);
+    if (pending) {
+      pendingConfirmations.delete(chatId);
+      await sendTextMessage(
+        chatId,
+        [
+          "❌ Registro cancelado.",
+          "",
+          "Para registrar com os valores corretos, envie uma mensagem de texto:",
+          `_Exemplo: "${pending.multipla.fornecedor ?? "Fornecedor"} [categoria] [DD/MM/AAAA] R$ [valor]"_`,
+        ].join("\n")
+      );
+      return true;
+    }
+    return false;
+  }
+
+  if (/^cmv\b/i.test(trimmed)) {
+    await handleCMV(chatId, trimmed);
+    return true;
+  }
+
+  if (/^analise\b/i.test(trimmed)) {
+    await handleAnalise(chatId, trimmed);
+    return true;
+  }
 
   if (/^dre\b/i.test(trimmed)) {
     await handleDRE(chatId, trimmed);
@@ -238,24 +949,100 @@ async function handleComando(chatId: string, msg: string): Promise<boolean> {
     return true;
   }
 
+  if (/^data\b/i.test(trimmed)) {
+    await handleData(chatId, trimmed);
+    return true;
+  }
+
+  if (/^categoria\b/i.test(trimmed)) {
+    await handleCategoria(chatId, trimmed);
+    return true;
+  }
+
+  if (/^excluir\b/i.test(trimmed)) {
+    await handleExcluir(chatId, trimmed);
+    return true;
+  }
+
+  if (/^recentes\b/i.test(trimmed)) {
+    await handleRecentes(chatId);
+    return true;
+  }
+
+  if (/^confirmar\s+comb/i.test(trimmed)) {
+    await handleConfirmarCombinacao(chatId, trimmed);
+    return true;
+  }
+
+  if (/^cancelar\s+comb/i.test(trimmed)) {
+    await handleCancelarCombinacao(chatId, trimmed);
+    return true;
+  }
+
+  if (/^conciliar\s+nc/i.test(trimmed)) {
+    await handleConciliar(chatId, trimmed);
+    return true;
+  }
+
+  if (/^descartar\s+nc/i.test(trimmed)) {
+    await handleDescartar(chatId, trimmed);
+    return true;
+  }
+
+  if (/^nao_conciliados\b/i.test(trimmed) || /^não_conciliados\b/i.test(trimmed)) {
+    await handleListarNaoConciliados(chatId);
+    return true;
+  }
+
   if (/^(ajuda|help|\?)\s*$/i.test(trimmed)) {
     const ajuda = [
-      "*Comandos disponíveis:*",
+      "*📋 Como usar o Financeiro*",
       "",
-      "*Consultas:*",
-      "• *resumo* — saldo rápido do mês atual",
-      "• *dre* — DRE operacional do mês atual",
-      "• *dre julho* — DRE de um mês específico",
-      "• *dre 2024-07* — DRE por competência",
-      "• *pendentes* — contas a pagar em aberto",
+      "*1. Registrar despesa*",
+      "Mande foto de nota, boleto ou cupom — o sistema lê e classifica automaticamente.",
+      "Adicione uma legenda para ajudar: _\"gás\"_, _\"fornecedor de carne\"_",
+      "Ou descreva em texto: _\"conta de luz R$ 320\"_, _\"gás R$ 180\"_",
       "",
-      "*Ações:*",
-      "• *pago ABC123* — marca lançamento como pago",
+      "*2. Registrar receita*",
+      "Descreva em texto: _\"caixa do dia R$ 4.500 pix\"_",
       "",
-      "*Lançamentos:*",
-      "• Envie foto de nota fiscal, boleto ou cupom",
-      "• Envie o XML da NF-e como documento",
-      "• Descreva em texto: _\"paguei aluguel R$ 3.200\"_",
+      "*3. Dar baixa em conta a pagar*",
+      "Mande o comprovante com legenda — o sistema identifica e dá baixa automática.",
+      "Ou use: *pago ABC123*",
+      "",
+      "*4. Reconciliação de pagamentos*",
+      "O sistema tenta automaticamente conciliar comprovantes com contas pendentes.",
+      "Se encontrar uma combinação exata (1 comprovante = múltiplos boletos):",
+      "• *confirmar COMB001* — confirma a combinação",
+      "• *cancelar COMB001* — cancela a confirmação",
+      "",
+      "Se não conseguir conciliar automaticamente:",
+      "• *nao_conciliados* — lista comprovantes aguardando reconciliação",
+      "• *conciliar NC001 Materiais de Apoio* — reconcilia manualmente com categoria",
+      "• *descartar NC001* — descarta um comprovante",
+      "",
+      "*5. Consultas*",
+      "• *resumo* — saldo rápido do mês",
+      "• *pendentes* — contas em aberto com códigos",
+      "• *recentes* — últimos 8 lançamentos com códigos",
+      "• *cmv* — custos variáveis com percentual",
+      "• *cmv julho* — CMV de mês específico",
+      "• *dre* — resultado operacional completo",
+      "• *dre pdf* — relatório PDF com comparativo",
+      "• *dre julho* — resultado de mês específico",
+      "• *analise* — análise consultiva: o que subiu, o que preocupa, ações sugeridas",
+      "• *analise julho* — análise de mês específico",
+      "",
+      "*6. Corrigir erros*",
+      "• *excluir ABC123* — remove lançamento errado",
+      "• *data ABC123 29/07/2026* — corrige data de emissão",
+      "• *categoria ABC123 Salários CLT* — muda categoria de um lançamento",
+      "_Use *recentes* para ver os códigos dos últimos lançamentos_",
+      "",
+      "*7. Confirmar documentos com dúvida*",
+      "Se o sistema tiver dúvida (total divergente ou data não encontrada), ele pergunta antes de registrar.",
+      "• *sim* — confirma e registra",
+      "• *não* — cancela",
     ].join("\n");
     await sendTextMessage(chatId, ajuda);
     return true;
@@ -280,29 +1067,42 @@ router.post("/zapi", async (req: Request, res: Response) => {
 
     console.log("[Webhook] payload recebido:", JSON.stringify({
       fromMe: payload.fromMe,
-      isGroup: payload.isGroup,
       phone: payload.phone,
       chatId: payload.chatId,
       messageId: payload.messageId,
       text: payload.text?.message?.slice(0, 50),
+      imageKeys: payload.image ? Object.keys(payload.image) : null,
+      imageUrl: (payload.image as any)?.imageUrl ?? payload.image?.url ?? null,
+      documentUrl: (payload.document as any)?.documentUrl ?? payload.document?.url ?? null,
       GRUPO_FINANCEIRO_ID: process.env.GRUPO_FINANCEIRO_ID,
     }));
 
-    if (payload.fromMe) { console.log("[Webhook] ignorado: fromMe"); return; }
-
     const grupoId = process.env.GRUPO_FINANCEIRO_ID;
-    if (grupoId && payload.phone !== grupoId && payload.chatId !== grupoId) {
-      console.log("[Webhook] ignorado: não é o grupo financeiro. phone:", payload.phone, "chatId:", payload.chatId, "grupoId:", grupoId);
-      return;
+    if (grupoId) {
+      // Compara apenas os dígitos — ignora sufixos @g.us vs -group
+      const grupoNum = grupoId.replace(/\D/g, "");
+      const phoneNum = (payload.phone ?? "").replace(/\D/g, "");
+      const chatNum = (payload.chatId ?? "").replace(/\D/g, "");
+      if (phoneNum !== grupoNum && chatNum !== grupoNum) {
+        // Não é o grupo financeiro — encaminha para o webhook configurado (ex: Basílico)
+        const forwardUrl = process.env.FORWARD_WEBHOOK_URL;
+        if (forwardUrl) {
+          fetch(forwardUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(req.body),
+          }).catch((err) => console.error("[Forward] Erro ao encaminhar:", err));
+        }
+        return;
+      }
     }
+
+    if (payload.fromMe) { console.log("[Webhook] ignorado: fromMe"); return; }
 
     const messageId = payload.messageId;
     if (!messageId) return;
 
-    if (await isMessageProcessed(messageId)) {
-      console.log(`[Webhook] ${messageId} já processado`);
-      return;
-    }
+    if (await isMessageProcessed(messageId)) return;
     await markMessageProcessed(messageId);
 
     const chatId = payload.chatId ?? payload.phone;
@@ -313,48 +1113,95 @@ router.post("/zapi", async (req: Request, res: Response) => {
       if (isComando) return;
     }
 
+    // Avisa que está processando quando recebe imagem ou documento
+    const temMidia = !!(payload.image?.imageUrl ?? payload.image?.url ?? payload.document?.documentUrl ?? payload.document?.url);
+    if (temMidia) {
+      await sendTextMessage(chatId, "⏳ Analisando documento...");
+    }
+
     // Extrai dados financeiros do documento ou texto livre
     const resultado = await processar(payload);
     if (!resultado) return;
 
-    const { extracted, urlArquivo } = resultado;
+    const { urlArquivo } = resultado;
 
-    // Resolve categoria: busca no banco por nome; se não achar, cria com grupo inferido
+    // ── Múltiplos itens (imagem/PDF com vários produtos) ─────────────────────
+    if (resultado.multipla) {
+      const { multipla } = resultado;
+
+      // Comprovante de pagamento único via imagem (ex: PIX enviado + legenda "gás")
+      if (multipla.tipo_documento === "comprovante" && multipla.itens.length === 1) {
+        const item = multipla.itens[0];
+        let categoriaId: string | undefined;
+        if (item.categoria_sugerida) {
+          try {
+            const grupoDre = inferirGrupoDre(item.categoria_sugerida, item.tipo_lancamento);
+            const cat = await findOrCreateCategoria(item.categoria_sugerida, grupoDre, item.tipo_lancamento);
+            categoriaId = cat.id;
+          } catch { /* ignora */ }
+        }
+        const resolvido = await handleComprovante(chatId, item.valor, categoriaId, item.categoria_sugerida, urlArquivo, messageId);
+        if (resolvido) return;
+        // Sem match — registra como pago diretamente
+        const lanc = await createLancamento(
+          { tipo_documento: "comprovante", fornecedor: multipla.fornecedor, cnpj_cpf: multipla.cnpj_cpf, descricao: item.descricao, valor_total: item.valor, data_emissao: multipla.data_emissao, categoria_sugerida: item.categoria_sugerida, tipo_lancamento: item.tipo_lancamento, confianca: item.confianca },
+          messageId, urlArquivo, categoriaId, "pago", new Date().toISOString().substring(0, 10)
+        );
+        await sendTextMessage(chatId, `✅ *${item.descricao}* registrado como pago\n💰 R$ ${brl(item.valor)}\n🔑 Código: *${codigoCurto(lanc.id)}*`);
+        return;
+      }
+
+      // Verifica se há dúvida antes de registrar
+      const duvida = precisaConfirmacao(multipla);
+      if (duvida) {
+        pendingConfirmations.set(chatId, { multipla, urlArquivo, messageId });
+        await sendConfirmacaoPendente(chatId, multipla, duvida);
+        return;
+      }
+
+      await registrarMultipla(chatId, multipla, urlArquivo, messageId);
+      return;
+    }
+
+    // ── Entrada única (texto ou XML NF-e) ────────────────────────────────────
+    const extracted = resultado.extracted!;
+
     let categoriaId: string | undefined;
     if (extracted.categoria_sugerida) {
       try {
-        const grupoDre = inferirGrupoDre(
-          extracted.categoria_sugerida,
-          extracted.tipo_lancamento
-        );
-        const cat = await findOrCreateCategoria(
-          extracted.categoria_sugerida,
-          grupoDre,
-          extracted.tipo_lancamento
-        );
+        const grupoDre = inferirGrupoDre(extracted.categoria_sugerida, extracted.tipo_lancamento);
+        const cat = await findOrCreateCategoria(extracted.categoria_sugerida, grupoDre, extracted.tipo_lancamento);
         categoriaId = cat.id;
       } catch (err) {
         console.warn("[Webhook] Não foi possível resolver categoria:", err);
       }
     }
 
-    const lancamento = await createLancamento(extracted, messageId, urlArquivo, categoriaId);
+    // Se for comprovante, tenta dar baixa em pendente existente
+    if (extracted.tipo_documento === "comprovante" && extracted.tipo_lancamento === "despesa") {
+      const resolvido = await handleComprovante(chatId, extracted.valor_total, categoriaId, extracted.categoria_sugerida, urlArquivo, messageId);
+      if (resolvido) return;
+      // Sem pendente correspondente — registra como pago
+      const lancPago = await createLancamento(extracted, messageId, urlArquivo, categoriaId, "pago", new Date().toISOString().substring(0, 10));
+      await sendTextMessage(chatId, `✅ *${extracted.descricao}* registrado como pago\n💰 R$ ${brl(extracted.valor_total)}\n🔑 Código: *${codigoCurto(lancPago.id)}*`);
+      return;
+    }
+
+    const { status, dataPagamento } = determinarStatusDocumento(extracted.tipo_documento);
+    const lancamento = await createLancamento(extracted, messageId, urlArquivo, categoriaId, status, dataPagamento);
 
     const emoji = extracted.tipo_lancamento === "receita" ? "📈" : "📉";
+    const catNome = (lancamento as any).categoria_nome ?? extracted.categoria_sugerida ?? "Sem categoria";
     const confirmacao = [
       `${emoji} *${extracted.tipo_lancamento === "receita" ? "Receita" : "Despesa"} registrada!*`,
       `📋 ${extracted.descricao}`,
       `💰 R$ ${brl(Number(extracted.valor_total))}`,
       extracted.data_emissao ? `📅 Emissão: ${formatarData(extracted.data_emissao)}` : null,
       extracted.data_vencimento ? `⏰ Vencimento: ${formatarData(extracted.data_vencimento)}` : null,
-      extracted.categoria_sugerida ? `🏷️ ${extracted.categoria_sugerida}` : null,
+      `🏷️ ${catNome}`,
       `🔑 Código: *${codigoCurto(lancamento.id)}*`,
-      extracted.confianca !== "alta"
-        ? `⚠️ Confiança *${extracted.confianca}* — confira os dados.`
-        : null,
-    ]
-      .filter(Boolean)
-      .join("\n");
+      extracted.confianca !== "alta" ? `⚠️ Confiança *${extracted.confianca}* — confira os dados.` : null,
+    ].filter(Boolean).join("\n");
 
     await sendTextMessage(chatId, confirmacao);
   } catch (err) {

@@ -13,12 +13,14 @@ export interface ZAPIPayload {
     message: string;
   };
   image?: {
-    url: string;
+    url?: string;       // alguns clientes Z-API
+    imageUrl?: string;  // formato padrão Z-API
     caption?: string;
     mimeType: string;
   };
   document?: {
-    url: string;
+    url?: string;
+    documentUrl?: string; // formato padrão Z-API
     mimeType: string;
     title?: string;
     fileName?: string;
@@ -30,6 +32,7 @@ export interface ExtractedDocument {
   tipo_documento:
     | "nota_fiscal"
     | "boleto"
+    | "comprovante"
     | "recibo"
     | "extrato"
     | "contrato"
@@ -89,7 +92,32 @@ export type GrupoDRE =
   | "utilidades"
   | "despesas_admin"
   | "marketing"
-  | "pessoal_fixo";
+  | "manutencao"
+  | "despesas_aquisicao"
+  | "servicos_terceirizados"
+  | "pessoal_fixo"
+  | "retirada_socios"
+  | "renegociacoes_dividas"
+  | "despesas_financeiras";
+
+// Item de documento com múltiplos produtos (nota de supermercado, atacado, etc.)
+export interface ItemExtraido {
+  descricao: string;
+  valor: number;
+  categoria_sugerida?: string;
+  tipo_lancamento: "receita" | "despesa";
+  confianca: "alta" | "media" | "baixa";
+}
+
+export interface ExtracaoMultipla {
+  tipo_documento: string;
+  fornecedor?: string;
+  cnpj_cpf?: string;
+  data_emissao?: string;
+  data_vencimento?: string;
+  valor_total_documento?: number;
+  itens: ItemExtraido[];
+}
 
 // Linha de item no DRE
 export interface LinhasDRE {
@@ -127,7 +155,13 @@ export interface DRE {
   utilidades: LinhasDRE[];
   despesas_admin: LinhasDRE[];
   marketing: LinhasDRE[];
+  manutencao: LinhasDRE[];
+  despesas_aquisicao: LinhasDRE[];
+  servicos_terceirizados: LinhasDRE[];
   pessoal_fixo: LinhasDRE[];
+  retirada_socios: LinhasDRE[];
+  renegociacoes_dividas: LinhasDRE[];
+  despesas_financeiras: LinhasDRE[];
   total_despesas_fixas: number;
   total_despesas_fixas_pct: number;
 
