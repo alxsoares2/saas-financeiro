@@ -177,7 +177,9 @@ ATENÇÃO — iFood Pago vs Tarifa iFood:
 - Se o comprovante mostra PIX enviado de uma conta iFood Pago para uma PESSOA ou EMPRESA TERCEIRA (campo Destino/Favorecido com nome diferente do iFood), classifique conforme o destinatário e o contexto — pode ser salário, fornecedor, aluguel, etc. Não use "Tarifa iFood" nesses casos.
 
 Categorias disponíveis (use o nome exato):
-  CMV: "Bovinos", "Suínos", "Aves", "Frutos do Mar", "FLV (Frutas, Legumes e Verduras)", "Laticínios e Frios", "Congelados", "Grãos / Cereais / Farinhas", "Óleos / Azeites / Gorduras", "Café e Infusões", "Condimentos / Temperos / Molhos", "Outros Ingredientes"
+  CMV: "Bovinos", "Suínos", "Aves", "Frutos do Mar", "FLV (Frutas, Legumes e Verduras)",
+       "Laticínios e Frios" (INCLUI: leite, queijo, manteiga, iogurte, requeijão, cream cheese, frios, presunto, mortadela),
+       "Congelados", "Grãos / Cereais / Farinhas", "Óleos / Azeites / Gorduras", "Café e Infusões", "Condimentos / Temperos / Molhos", "Outros Ingredientes"
   Bebidas: "Cervejas", "Destilados", "Vinhos", "Bebidas Não Alcoólicas", "Água Mineral"
   Apoio: "Material de Limpeza e Higiene", "Embalagens e Descartáveis", "Gelo"
   Tarifas: "Tarifa Cartão de Crédito", "Tarifa Cartão de Débito", "Tarifa iFood", "Tarifa Pix"
