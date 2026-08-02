@@ -145,6 +145,28 @@ export async function getLancamentosPendentes(limite = 30): Promise<
   }));
 }
 
+export async function getLancamentosAConfirmar(limite = 30): Promise<
+  (Lancamento & { categoria_nome?: string })[]
+> {
+  const [{ data, error }, cats] = await Promise.all([
+    getClient()
+      .from("lancamentos")
+      .select("*")
+      .eq("status", "a_confirmar")
+      .eq("tipo", "despesa")
+      .order("data_vencimento", { ascending: true, nullsFirst: false })
+      .limit(limite),
+    getCategoriaMap(),
+  ]);
+
+  if (error) throw new Error(`Erro ao buscar a confirmar: ${error.message}`);
+
+  return (data ?? []).map((row: any) => ({
+    ...row,
+    categoria_nome: cats.get(row.categoria_id)?.nome,
+  }));
+}
+
 export async function marcarComoPago(id: string): Promise<boolean> {
   const hoje = new Date().toISOString().substring(0, 10);
   const { error, count } = await getClient()
@@ -658,4 +680,200 @@ export async function descartarNaoConciliado(ncId: string): Promise<boolean> {
 
   if (error) throw new Error(`Erro ao descartar: ${error.message}`);
   return true;
+}
+
+// ============================================================================
+// RECORRENTES — Despesas que repetem todo mês
+// ============================================================================
+
+interface Recorrente {
+  id: string;
+  descricao: string;
+  valor: number | null;
+  categoria_id: string;
+  fornecedor: string | null;
+  dia_vencimento: number;
+  dias_antecedencia: number;
+  ativo: boolean;
+  created_at: string;
+  ultima_geracao: string | null;
+  categoria_nome?: string;
+}
+
+export async function criarRecorrente(
+  descricao: string,
+  valor: number | null,
+  categoriaId: string,
+  fornecedor: string | null,
+  diaVencimento: number,
+  diasAntecedencia: number = 5
+): Promise<string> {
+  const { data, error } = await getClient()
+    .from("recorrentes_despesas")
+    .insert({
+      descricao,
+      valor: valor || null,
+      categoria_id: categoriaId,
+      fornecedor: fornecedor || null,
+      dia_vencimento: diaVencimento,
+      dias_antecedencia: diasAntecedencia,
+      ativo: true,
+    })
+    .select("id")
+    .single();
+
+  if (error) throw new Error(`Erro ao criar recorrente: ${error.message}`);
+  return data.id;
+}
+
+export async function listarRecorrentes(): Promise<Recorrente[]> {
+  const { data, error } = await getClient()
+    .from("recorrentes_despesas")
+    .select("*, categorias:categoria_id(nome)")
+    .order("dia_vencimento", { ascending: true });
+
+  if (error) throw new Error(`Erro ao listar recorrentes: ${error.message}`);
+
+  return (data ?? []).map((r: any) => ({
+    ...r,
+    categoria_nome: r.categorias?.nome,
+  }));
+}
+
+export async function pausarRecorrente(id: string): Promise<boolean> {
+  const { error, count } = await getClient()
+    .from("recorrentes_despesas")
+    .update({ ativo: false })
+    .eq("id", id);
+
+  if (error) throw new Error(`Erro ao pausar recorrente: ${error.message}`);
+  return (count ?? 0) > 0;
+}
+
+export async function resumirRecorrente(id: string): Promise<boolean> {
+  const { error, count } = await getClient()
+    .from("recorrentes_despesas")
+    .update({ ativo: true })
+    .eq("id", id);
+
+  if (error) throw new Error(`Erro ao resumir recorrente: ${error.message}`);
+  return (count ?? 0) > 0;
+}
+
+export async function excluirRecorrente(id: string): Promise<boolean> {
+  const { error, count } = await getClient()
+    .from("recorrentes_despesas")
+    .delete()
+    .eq("id", id);
+
+  if (error) throw new Error(`Erro ao excluir recorrente: ${error.message}`);
+  return (count ?? 0) > 0;
+}
+
+export async function atualizarUltimaGeracao(id: string, mesMarcador: string): Promise<boolean> {
+  const { error, count } = await getClient()
+    .from("recorrentes_despesas")
+    .update({ ultima_geracao: mesMarcador })
+    .eq("id", id);
+
+  if (error) throw new Error(`Erro ao atualizar ultima_geracao: ${error.message}`);
+  return (count ?? 0) > 0;
+}
+
+export async function atualizarValorLancamento(id: string, valor: number): Promise<boolean> {
+  const { error, count } = await getClient()
+    .from("lancamentos")
+    .update({ valor: valor, status: "pendente" })
+    .eq("id", id);
+
+  if (error) throw new Error(`Erro ao atualizar valor: ${error.message}`);
+  return (count ?? 0) > 0;
+}
+
+// ── Alertas ──────────────────────────────────────────────────────────────
+
+interface AlertaConfig {
+  id: string;
+  tipo_alerta: 'vencimento_proximo' | 'vencido_5dias' | 'cmv_acima_meta';
+  chat_id: string;
+  loja_id: string;
+  ativo: boolean;
+  cmv_meta?: number;
+}
+
+export async function listarAlertasConfig(tipo?: string, ativo = true): Promise<AlertaConfig[]> {
+  let query = getClient()
+    .from("alertas_config")
+    .select("*");
+
+  if (tipo) query = query.eq("tipo_alerta", tipo);
+  if (ativo) query = query.eq("ativo", true);
+
+  const { data, error } = await query;
+  if (error) throw new Error(`Erro ao listar alertas_config: ${error.message}`);
+  return data ?? [];
+}
+
+export async function atualizarMetaCMV(chatId: string, meta: number): Promise<boolean> {
+  const { error, count } = await getClient()
+    .from("alertas_config")
+    .update({ cmv_meta: meta })
+    .eq("chat_id", chatId)
+    .eq("tipo_alerta", "cmv_acima_meta");
+
+  if (error) throw new Error(`Erro ao atualizar meta CMV: ${error.message}`);
+  return (count ?? 0) > 0;
+}
+
+export async function marcarAlertaVencimentoEnviado(lancamentoId: string): Promise<boolean> {
+  const { error, count } = await getClient()
+    .from("lancamentos")
+    .update({ alerta_vencimento_enviado: true })
+    .eq("id", lancamentoId);
+
+  if (error) throw new Error(`Erro ao marcar alerta vencimento: ${error.message}`);
+  return (count ?? 0) > 0;
+}
+
+export async function marcarAlertaVencidoEnviado(lancamentoId: string): Promise<boolean> {
+  const { error, count } = await getClient()
+    .from("lancamentos")
+    .update({ alerta_vencido_enviado: true })
+    .eq("id", lancamentoId);
+
+  if (error) throw new Error(`Erro ao marcar alerta vencido: ${error.message}`);
+  return (count ?? 0) > 0;
+}
+
+export async function buscarLancamentosVencimentoProximo(): Promise<(Lancamento & { categoria_nome?: string })[]> {
+  const hoje = new Date().toISOString().substring(0, 10);
+  const amanha = new Date(Date.now() + 86400000).toISOString().substring(0, 10);
+  const depoisAmanha = new Date(Date.now() + 172800000).toISOString().substring(0, 10);
+
+  const { data, error } = await getClient()
+    .from("lancamentos")
+    .select("*")
+    .eq("status", "pendente")
+    .eq("tipo", "despesa")
+    .eq("alerta_vencimento_enviado", false)
+    .gte("data_vencimento", hoje)
+    .lte("data_vencimento", depoisAmanha);
+
+  if (error) throw new Error(`Erro ao buscar vencimentos próximos: ${error.message}`);
+  return data ?? [];
+}
+
+export async function buscarLancamentosVencido5Dias(): Promise<(Lancamento & { categoria_nome?: string })[]> {
+  const data5DiasAtras = new Date(Date.now() - 432000000).toISOString().substring(0, 10);
+
+  const { data, error } = await getClient()
+    .from("lancamentos")
+    .select("*")
+    .eq("status", "pendente")
+    .eq("tipo", "despesa")
+    .eq("alerta_vencido_enviado", false)
+    .eq("data_vencimento", data5DiasAtras);
+
+  if (error) throw new Error(`Erro ao buscar lançamentos vencidos: ${error.message}`);
+  return data ?? [];
 }
