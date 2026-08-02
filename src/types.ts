@@ -104,6 +104,8 @@ export type GrupoDRE =
 export interface ItemExtraido {
   descricao: string;
   valor: number;
+  quantidade?: number;  // ex: 10 (kg, unidades, litros)
+  unidade?: string;     // ex: "kg", "un", "l"
   categoria_sugerida?: string;
   tipo_lancamento: "receita" | "despesa";
   confianca: "alta" | "media" | "baixa";

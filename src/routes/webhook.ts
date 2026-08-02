@@ -40,6 +40,7 @@ import {
   getLancamentosAConfirmar,
   listarAlertasConfig,
   atualizarMetaCMV,
+  registrarHistoricoCompra,
 } from "../db/supabase.js";
 
 const router = Router();
@@ -192,8 +193,9 @@ async function registrarMultipla(
   const totalGeral = multipla.itens.reduce((s, i) => s + i.valor, 0);
   const { status, dataPagamento } = determinarStatusDocumento(multipla.tipo_documento);
 
-  const criados: { descricao: string; valor: number; id: string; baixaConfianca: boolean }[] = [];
-  for (const item of multipla.itens) {
+  const criados: { descricao: string; valor: number; id: string; baixaConfianca: boolean; variacao?: number; quantidade?: number; unidade?: string }[] = [];
+  for (let idx = 0; idx < multipla.itens.length; idx++) {
+    const item = multipla.itens[idx];
     let categoriaId: string | undefined;
     if (item.categoria_sugerida) {
       try {
@@ -215,17 +217,55 @@ async function registrarMultipla(
         tipo_lancamento: item.tipo_lancamento,
         confianca: item.confianca,
       },
-      `${messageId}-${criados.length}`,
+      `${messageId}-${idx}`,
       urlArquivo,
       categoriaId,
       status,
       dataPagamento
     );
-    criados.push({ descricao: item.descricao, valor: item.valor, id: lancamento.id, baixaConfianca: item.confianca !== "alta" });
+
+    let variacao: number | undefined;
+    // Registrar histórico de compra se tem quantidade/unidade e é despesa
+    if (item.quantidade && item.unidade && item.tipo_lancamento === "despesa") {
+      try {
+        const historico = await registrarHistoricoCompra(
+          item.descricao,
+          item.quantidade,
+          item.unidade,
+          item.valor,
+          lancamento.id,
+          multipla.fornecedor,
+          multipla.data_emissao
+        );
+        variacao = historico.variacao_pct ?? undefined;
+      } catch (err) {
+        console.error("[Histórico] Erro ao registrar compra:", err);
+      }
+    }
+
+    criados.push({
+      descricao: item.descricao,
+      valor: item.valor,
+      id: lancamento.id,
+      baixaConfianca: item.confianca !== "alta",
+      variacao,
+      quantidade: item.quantidade,
+      unidade: item.unidade,
+    });
   }
 
   const linhasItens = criados
-    .map((c) => `  • ${c.descricao}: R$ ${brl(c.valor)} [${codigoCurto(c.id)}]${c.baixaConfianca ? " ⚠️" : ""}`)
+    .map((c) => {
+      let linha = `  • ${c.descricao}: R$ ${brl(c.valor)} [${codigoCurto(c.id)}]${c.baixaConfianca ? " ⚠️" : ""}`;
+      if (c.quantidade && c.unidade) {
+        linha += ` (${c.quantidade}${c.unidade})`;
+      }
+      if (c.variacao !== undefined) {
+        const sinal = c.variacao > 0 ? "📈 +" : c.variacao < 0 ? "📉 " : "➡️ ";
+        linha += ` ${sinal}${Math.abs(c.variacao).toFixed(1)}%`;
+      }
+      return linha;
+    })
     .join("\n");
 
   const temBaixaConfianca = criados.some((c) => c.baixaConfianca);

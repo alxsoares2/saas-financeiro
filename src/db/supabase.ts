@@ -877,3 +877,84 @@ export async function buscarLancamentosVencido5Dias(): Promise<(Lancamento & { c
   if (error) throw new Error(`Erro ao buscar lançamentos vencidos: ${error.message}`);
   return data ?? [];
 }
+
+// ── Histórico de Compras ─────────────────────────────────────────────────
+
+interface HistoricoCompra {
+  id: string;
+  produto_nome: string;
+  quantidade: number;
+  unidade: string;
+  preco_total: number;
+  preco_unitario: number;
+  lancamento_id: string;
+  fornecedor?: string;
+  data_compra: string;
+  variacao_pct?: number;
+  ultima_compra_id?: string;
+}
+
+export async function registrarHistoricoCompra(
+  produtoNome: string,
+  quantidade: number,
+  unidade: string,
+  precoTotal: number,
+  lancamentoId: string,
+  fornecedor?: string,
+  dataCompra?: string
+): Promise<HistoricoCompra> {
+  const data = dataCompra || new Date().toISOString().substring(0, 10);
+  const precoUnitario = precoTotal / quantidade;
+
+  // Buscar última compra do mesmo produto
+  const { data: ultimaCompra } = await getClient()
+    .from("historico_compras")
+    .select("*")
+    .ilike("produto_nome", `%${produtoNome}%`)
+    .order("data_compra", { ascending: false })
+    .limit(1);
+
+  let variacao = null;
+  let ultimaCompraId = null;
+
+  if (ultimaCompra && ultimaCompra.length > 0) {
+    const ultima = ultimaCompra[0];
+    ultimaCompraId = ultima.id;
+    // Calcular variação: (novo - antigo) / antigo * 100
+    variacao = ((precoUnitario - ultima.preco_unitario) / ultima.preco_unitario) * 100;
+  }
+
+  const { data: novaCompra, error } = await getClient()
+    .from("historico_compras")
+    .insert([
+      {
+        produto_nome: produtoNome,
+        quantidade,
+        unidade,
+        preco_total: precoTotal,
+        preco_unitario: precoUnitario,
+        lancamento_id: lancamentoId,
+        fornecedor,
+        data_compra: data,
+        variacao_pct: variacao ? Math.round(variacao * 100) / 100 : null,
+        ultima_compra_id: ultimaCompraId,
+      },
+    ])
+    .select()
+    .single();
+
+  if (error) throw new Error(`Erro ao registrar histórico de compra: ${error.message}`);
+  return novaCompra;
+}
+
+export async function buscarUltimaCompra(produtoNome: string): Promise<HistoricoCompra | null> {
+  const { data, error } = await getClient()
+    .from("historico_compras")
+    .select("*")
+    .ilike("produto_nome", `%${produtoNome}%`)
+    .order("data_compra", { ascending: false })
+    .limit(1);
+
+  if (error) throw new Error(`Erro ao buscar última compra: ${error.message}`);
+  return data && data.length > 0 ? data[0] : null;
+}
