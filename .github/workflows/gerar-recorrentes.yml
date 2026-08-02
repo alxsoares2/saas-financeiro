@@ -1,0 +1,25 @@
+name: Gerar Despesas Recorrentes
+
+on:
+  schedule:
+    # Diariamente às 6h UTC (3h Brasília)
+    - cron: "0 6 * * *"
+  workflow_dispatch:  # Permite rodar manual via GitHub UI
+
+jobs:
+  gerar-recorrentes:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Chamar endpoint de geração de recorrentes
+        run: |
+          curl -sf -X POST \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            https://saas-financeiro-production-63fd.up.railway.app/api/cron/gerar-recorrentes
+
+      - name: Log de sucesso
+        if: success()
+        run: echo "✅ Recorrentes gerados com sucesso"
+
+      - name: Log de erro
+        if: failure()
+        run: echo "❌ Erro ao gerar recorrentes — verifique o endpoint"
