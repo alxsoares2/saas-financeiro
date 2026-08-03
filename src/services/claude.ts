@@ -31,7 +31,7 @@ Regras:
 - valor_total sempre em reais, número sem formatação (ex: 1500.90)
 - tipo_lancamento: "despesa" para compras/boletos/NF de fornecedor; "receita" para fechamento de caixa/comprovante de venda
 - confianca: "alta" se dados claramente visíveis; "media" se há ambiguidade; "baixa" se ilegível ou incompleto
-- categoria_sugerida: use EXATAMENTE uma das categorias abaixo conforme o conteúdo do documento
+- categoria_sugerida: OBRIGATÓRIA — NUNCA null. Use EXATAMENTE uma das categorias abaixo, sempre a mais próxima. Queijo/leite/manteiga → "Laticínios e Frios"; gasolina → "Despesas com Veículos". Na dúvida, escolha a mais próxima — nunca deixe em branco.
 
 Categorias de DESPESA disponíveis (use o nome exato):
   Custos variáveis: "Bovinos", "Suínos", "Aves", "Frutos do Mar", "FLV (Frutas, Legumes e Verduras)", "Laticínios e Frios", "Congelados", "Grãos / Cereais / Farinhas", "Óleos / Azeites / Gorduras", "Café e Infusões", "Condimentos / Temperos / Molhos", "Outros Ingredientes"
@@ -175,6 +175,19 @@ ATENÇÃO — iFood Pago vs Tarifa iFood:
 - "iFood Pago" / "IFOOD PAGO IP" é uma conta digital (banco) que restaurantes usam para fazer PIX e transferências. NÃO é taxa de plataforma.
 - "Tarifa iFood" só se aplica quando o documento é uma fatura/boleto de comissão cobrada pelo iFood pelo uso do app de delivery.
 - Se o comprovante mostra PIX enviado de uma conta iFood Pago para uma PESSOA ou EMPRESA TERCEIRA (campo Destino/Favorecido com nome diferente do iFood), classifique conforme o destinatário e o contexto — pode ser salário, fornecedor, aluguel, etc. Não use "Tarifa iFood" nesses casos.
+
+⛔ REGRA CRÍTICA — categoria_sugerida é OBRIGATÓRIA em TODO item. NUNCA devolva null.
+Todo produto de restaurante tem uma categoria. Sempre escolha a MAIS PRÓXIMA da lista abaixo.
+Se estiver em dúvida entre duas, escolha uma — nunca deixe em branco.
+Se realmente não encaixar em nenhuma específica, use "Outros Ingredientes" (comida/insumo),
+"Bebidas Não Alcoólicas" (bebida) ou "Outras Despesas Administrativas" (não-alimentar).
+Exemplos de itens que SEMPRE têm categoria (não erre estes):
+  - queijo, muçarela, leite, manteiga, requeijão, iogurte, presunto → "Laticínios e Frios"
+  - carne, boi, alcatra, patinho, acém → "Bovinos"
+  - frango, coxa, peito, asa → "Aves"
+  - tomate, cebola, alface, batata → "FLV (Frutas, Legumes e Verduras)"
+  - gasolina, combustível, diesel → "Despesas com Veículos"
+  - refrigerante, coca, guaraná, suco → "Bebidas Não Alcoólicas"
 
 Categorias disponíveis (use o nome exato):
   CMV: "Bovinos", "Suínos", "Aves", "Frutos do Mar", "FLV (Frutas, Legumes e Verduras)",

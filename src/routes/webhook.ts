@@ -195,16 +195,25 @@ async function registrarMultipla(
   const totalGeral = multipla.itens.reduce((s, i) => s + i.valor, 0);
   const { status, dataPagamento } = determinarStatusDocumento(multipla.tipo_documento);
 
-  const criados: { descricao: string; valor: number; id: string; baixaConfianca: boolean; variacao?: number; quantidade?: number; unidade?: string }[] = [];
+  const criados: { descricao: string; valor: number; id: string; baixaConfianca: boolean; variacao?: number; quantidade?: number; unidade?: string; semCategoria?: boolean }[] = [];
   for (let idx = 0; idx < multipla.itens.length; idx++) {
     const item = multipla.itens[idx];
     let categoriaId: string | undefined;
-    if (item.categoria_sugerida) {
-      try {
-        const grupoDre = inferirGrupoDre(item.categoria_sugerida, item.tipo_lancamento);
-        const cat = await findOrCreateCategoria(item.categoria_sugerida, grupoDre, item.tipo_lancamento);
-        categoriaId = cat.id;
-      } catch { /* ignora */ }
+    let semCategoria = false;
+
+    // Rede de segurança: nenhum item pode ser salvo sem categoria.
+    // Se o Claude não classificou, usa um fallback por tipo e MARCA pra revisão.
+    const catNome =
+      item.categoria_sugerida ||
+      (item.tipo_lancamento === "receita" ? "Outras Receitas" : "Outros Ingredientes");
+    if (!item.categoria_sugerida) semCategoria = true;
+
+    try {
+      const grupoDre = inferirGrupoDre(catNome, item.tipo_lancamento);
+      const cat = await findOrCreateCategoria(catNome, grupoDre, item.tipo_lancamento);
+      categoriaId = cat.id;
+    } catch {
+      semCategoria = true; // falhou ao resolver categoria — marca pra revisão
     }
     const lancamento = await createLancamento(
       {
@@ -253,6 +262,7 @@ async function registrarMultipla(
       variacao,
       quantidade: item.quantidade,
       unidade: item.unidade,
+      semCategoria,
     });
   }
 
@@ -266,16 +276,21 @@ async function registrarMultipla(
         const sinal = c.variacao > 0 ? "📈 +" : c.variacao < 0 ? "📉 " : "➡️ ";
         linha += ` ${sinal}${Math.abs(c.variacao).toFixed(1)}%`;
       }
+      if (c.semCategoria) {
+        linha += `\n     🏷️ *categoria automática* — confira: categoria ${codigoCurto(c.id)} [nome]`;
+      }
       return linha;
     })
     .join("\n");
 
   const temBaixaConfianca = criados.some((c) => c.baixaConfianca);
+  const temSemCategoria = criados.some((c) => c.semCategoria);
   const confirmacao = [
     `📋 *${fornecedor}* — R$ ${brl(totalGeral)}`,
     `${criados.length} lançamento${criados.length > 1 ? "s" : ""} criado${criados.length > 1 ? "s" : ""}:`,
     "",
     linhasItens,
+    temSemCategoria ? "\n🏷️ Itens marcados foram classificados no automático (provisório) — confira e ajuste se precisar." : null,
     temBaixaConfianca ? "\n⚠️ Itens com ⚠️ têm confiança baixa — confira os valores." : null,
     multipla.data_emissao ? `📅 Emissão: ${formatarData(multipla.data_emissao)}` : null,
     multipla.data_vencimento ? `⏰ Vencimento: ${formatarData(multipla.data_vencimento)}` : null,
@@ -1617,15 +1632,20 @@ router.post("/zapi", async (req: Request, res: Response) => {
     // ── Entrada única (texto ou XML NF-e) ────────────────────────────────────
     const extracted = resultado.extracted!;
 
+    // Rede de segurança: sempre resolve uma categoria (fallback por tipo se preciso)
     let categoriaId: string | undefined;
-    if (extracted.categoria_sugerida) {
-      try {
-        const grupoDre = inferirGrupoDre(extracted.categoria_sugerida, extracted.tipo_lancamento);
-        const cat = await findOrCreateCategoria(extracted.categoria_sugerida, grupoDre, extracted.tipo_lancamento);
-        categoriaId = cat.id;
-      } catch (err) {
-        console.warn("[Webhook] Não foi possível resolver categoria:", err);
-      }
+    let semCategoriaUnica = false;
+    const catNomeUnica =
+      extracted.categoria_sugerida ||
+      (extracted.tipo_lancamento === "receita" ? "Outras Receitas" : "Outros Ingredientes");
+    if (!extracted.categoria_sugerida) semCategoriaUnica = true;
+    try {
+      const grupoDre = inferirGrupoDre(catNomeUnica, extracted.tipo_lancamento);
+      const cat = await findOrCreateCategoria(catNomeUnica, grupoDre, extracted.tipo_lancamento);
+      categoriaId = cat.id;
+    } catch (err) {
+      console.warn("[Webhook] Não foi possível resolver categoria:", err);
+      semCategoriaUnica = true;
     }
 
     // Se for comprovante, tenta dar baixa em pendente existente
@@ -1642,15 +1662,16 @@ router.post("/zapi", async (req: Request, res: Response) => {
     const lancamento = await createLancamento(extracted, messageId, urlArquivo, categoriaId, status, dataPagamento);
 
     const emoji = extracted.tipo_lancamento === "receita" ? "📈" : "📉";
-    const catNome = (lancamento as any).categoria_nome ?? extracted.categoria_sugerida ?? "Sem categoria";
+    const catNome = (lancamento as any).categoria_nome ?? catNomeUnica;
     const confirmacao = [
       `${emoji} *${extracted.tipo_lancamento === "receita" ? "Receita" : "Despesa"} registrada!*`,
       `📋 ${extracted.descricao}`,
       `💰 R$ ${brl(Number(extracted.valor_total))}`,
       extracted.data_emissao ? `📅 Emissão: ${formatarData(extracted.data_emissao)}` : null,
       extracted.data_vencimento ? `⏰ Vencimento: ${formatarData(extracted.data_vencimento)}` : null,
-      `🏷️ ${catNome}`,
+      `🏷️ ${catNome}${semCategoriaUnica ? " _(automática — confira)_" : ""}`,
       `🔑 Código: *${codigoCurto(lancamento.id)}*`,
+      semCategoriaUnica ? `🏷️ Categoria no automático — ajuste com: categoria ${codigoCurto(lancamento.id)} [nome]` : null,
       extracted.confianca !== "alta" ? `⚠️ Confiança *${extracted.confianca}* — confira os dados.` : null,
     ].filter(Boolean).join("\n");
 
