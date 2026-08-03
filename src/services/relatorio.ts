@@ -224,68 +224,32 @@ export async function gerarRelatorioContas(
   Object.keys(porCategoria)
     .sort()
     .forEach((categoria) => {
-      doc.fontSize(10).font("Helvetica-Bold").text(categoria);
+      doc.fontSize(10).font("Helvetica-Bold").text(`\n${categoria}`);
+      doc.fontSize(8).font("Helvetica");
 
       const items = porCategoria[categoria];
-      const colunas = {
-        status: 60,
-        descricao: 200,
-        valor: 70,
-        vencimento: 80,
-      };
-
-      // Cabeçalho da tabela
-      doc.fontSize(9).font("Helvetica-Bold");
-      let x = doc.x;
-      doc.text("Status", x, doc.y, { width: colunas.status });
-      x += colunas.status;
-      doc.text("Descrição", x, doc.y - 12, { width: colunas.descricao });
-      x += colunas.descricao;
-      doc.text("Valor", x, doc.y - 24, { width: colunas.valor });
-      x += colunas.valor;
-      doc.text("Vencimento", x, doc.y - 36, { width: colunas.vencimento });
-
-      doc.moveTo(40, doc.y + 2).lineTo(555, doc.y + 2).stroke();
-      doc.moveDown(0.5);
-
-      // Linhas de dados
-      doc.fontSize(8).font("Helvetica");
       items.forEach((item: any) => {
         let statusLabel = "?";
 
         if (item.status === "pago" || item.status === "pago_parcialmente") {
-          statusLabel = item.status === "pago" ? "P" : "PP";
+          statusLabel = item.status === "pago" ? "[P]" : "[PP]";
         } else if (item.status === "pendente") {
           if (item.data_vencimento && new Date(item.data_vencimento) < new Date()) {
-            statusLabel = "V";
+            statusLabel = "[V]";
           } else {
-            statusLabel = "A";
+            statusLabel = "[A]";
           }
         }
 
-        x = 40;
-        doc.text(statusLabel, x, doc.y, { width: colunas.status });
-        x += colunas.status;
-        doc.text(item.descricao || "—", x, doc.y - 12, {
-          width: colunas.descricao,
-        });
-        x += colunas.descricao;
-        doc.text(`R$ ${item.valor.toFixed(2)}`, x, doc.y - 24, {
-          width: colunas.valor,
-          align: "right",
-        });
-        x += colunas.valor;
-        doc.text(
-          item.data_vencimento ? formatarData(item.data_vencimento) : "—",
-          x,
-          doc.y - 36,
-          { width: colunas.vencimento }
-        );
+        const descricao = (item.descricao || "—").substring(0, 40);
+        const data = item.data_vencimento ? formatarData(item.data_vencimento) : "—";
+        const valor = `R$ ${Number(item.valor).toFixed(2)}`;
 
-        doc.moveDown(0.8);
+        doc.text(`${statusLabel} ${descricao}`, { continued: true });
+        doc.text(` ${valor} (${data})`);
       });
 
-      doc.moveDown(0.5);
+      doc.moveDown(0.3);
     });
 
   try {
