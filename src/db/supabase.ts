@@ -1,23 +1,50 @@
 import { createClient } from "@supabase/supabase-js";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { Categoria, ExtractedDocument, Lancamento } from "../types.js";
 
-// SDK do Supabase não infere tipos corretamente com schemas customizados sem um
-// arquivo de tipos gerado — usamos any aqui e tipamos os retornos manualmente.
+// ── Multi-tenant: qual loja (banco) está ativa no processamento atual ─────────
+//
+// Cada requisição/cron roda dentro de um contexto que diz qual banco usar.
+// As ~40 funções abaixo não mudam — elas chamam getClient(), que lê o contexto.
+// Sem contexto, cai no banco padrão (env legado) — Mano continua funcionando.
+
+export interface TenantCtx {
+  url: string;
+  key: string;
+  schema: string;
+}
+
+const als = new AsyncLocalStorage<TenantCtx>();
+
+// Cliente cacheado por (url + schema) — não recria a cada chamada.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-let _client: any = null;
+const _clients = new Map<string, any>();
+
+// Roda `fn` com a loja `ctx` ativa (usado nos crons, que iteram lojas).
+export function runWithTenant<T>(ctx: TenantCtx, fn: () => T): T {
+  return als.run(ctx, fn);
+}
+
+// Marca a loja ativa pro resto do processamento atual (usado no webhook).
+export function enterTenant(ctx: TenantCtx): void {
+  als.enterWith(ctx);
+}
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function getClient(): any {
-  if (!_client) {
-    const url = process.env.SUPABASE_URL!;
-    const key = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-    if (!url || !key) throw new Error("SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY são obrigatórios");
-    // Schema configurável por env — cada loja (Mano, Basílico) usa um schema separado.
-    // Default "financeiro" mantém o Mano funcionando sem mudar nada.
-    const schema = process.env.SUPABASE_SCHEMA || "financeiro";
-    _client = createClient(url, key, { db: { schema } });
+  const ctx = als.getStore();
+  const url = ctx?.url ?? process.env.SUPABASE_URL!;
+  const key = ctx?.key ?? process.env.SUPABASE_SERVICE_ROLE_KEY!;
+  const schema = ctx?.schema ?? process.env.SUPABASE_SCHEMA ?? "financeiro";
+  if (!url || !key) throw new Error("SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY são obrigatórios");
+
+  const cacheKey = `${url}::${schema}`;
+  let client = _clients.get(cacheKey);
+  if (!client) {
+    client = createClient(url, key, { db: { schema } });
+    _clients.set(cacheKey, client);
   }
-  return _client;
+  return client;
 }
 
 export async function isMessageProcessed(messageId: string): Promise<boolean> {

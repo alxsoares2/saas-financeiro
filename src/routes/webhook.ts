@@ -41,7 +41,9 @@ import {
   listarAlertasConfig,
   atualizarMetaCMV,
   registrarHistoricoCompra,
+  enterTenant,
 } from "../db/supabase.js";
+import { findTenantByChat } from "../config/tenants.js";
 
 const router = Router();
 
@@ -1528,25 +1530,23 @@ router.post("/zapi", async (req: Request, res: Response) => {
       GRUPO_FINANCEIRO_ID: process.env.GRUPO_FINANCEIRO_ID,
     }));
 
-    const grupoId = process.env.GRUPO_FINANCEIRO_ID;
-    if (grupoId) {
-      // Compara apenas os dígitos — ignora sufixos @g.us vs -group
-      const grupoNum = grupoId.replace(/\D/g, "");
-      const phoneNum = (payload.phone ?? "").replace(/\D/g, "");
-      const chatNum = (payload.chatId ?? "").replace(/\D/g, "");
-      if (phoneNum !== grupoNum && chatNum !== grupoNum) {
-        // Não é o grupo financeiro — encaminha para o webhook configurado (ex: Basílico)
-        const forwardUrl = process.env.FORWARD_WEBHOOK_URL;
-        if (forwardUrl) {
-          fetch(forwardUrl, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(req.body),
-          }).catch((err) => console.error("[Forward] Erro ao encaminhar:", err));
-        }
-        return;
+    // Identifica de qual LOJA é a mensagem (multi-tenant) e ativa o banco dela.
+    const tenant = findTenantByChat(payload.chatId, payload.phone);
+    if (!tenant) {
+      // Não é grupo de nenhuma loja — encaminha se houver webhook configurado
+      const forwardUrl = process.env.FORWARD_WEBHOOK_URL;
+      if (forwardUrl) {
+        fetch(forwardUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(req.body),
+        }).catch((err) => console.error("[Forward] Erro ao encaminhar:", err));
       }
+      return;
     }
+    // A partir daqui, todas as funções de banco usam o banco desta loja.
+    enterTenant({ url: tenant.url, key: tenant.key, schema: tenant.schema });
+    console.log(`[Webhook] loja identificada: ${tenant.id}`);
 
     if (payload.fromMe) { console.log("[Webhook] ignorado: fromMe"); return; }
 

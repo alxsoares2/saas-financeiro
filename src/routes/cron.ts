@@ -1,5 +1,6 @@
 import { Router, Request, Response } from "express";
 import * as supabase from "../db/supabase.js";
+import { getTenants } from "../config/tenants.js";
 
 const router = Router();
 
@@ -123,13 +124,20 @@ async function gerarRecorrentes() {
 
 router.post("/gerar-recorrentes", validarCronSecret, async (req: Request, res: Response) => {
   try {
-    const resultado = await gerarRecorrentes();
-    res.json(resultado);
-
-    // Log de sucesso
-    console.log(
-      `[CRON] Recorrentes: ${resultado.gerados} criados, ${resultado.jaExistiam} já existiam, ${resultado.erros} erros`
-    );
+    // Roda pra cada loja (multi-tenant), cada uma no seu banco
+    const tenants = getTenants();
+    const porLoja = [];
+    for (const t of tenants) {
+      const resultado = await supabase.runWithTenant(
+        { url: t.url, key: t.key, schema: t.schema },
+        () => gerarRecorrentes()
+      );
+      porLoja.push({ loja: t.id, ...resultado });
+      console.log(
+        `[CRON] Recorrentes [${t.id}]: ${resultado.gerados} criados, ${resultado.jaExistiam} já existiam, ${resultado.erros} erros`
+      );
+    }
+    res.json({ lojas: porLoja });
   } catch (err) {
     console.error("[CRON] Erro ao gerar recorrentes:", err);
     res.status(500).json({
@@ -243,10 +251,18 @@ async function enviarAlertas() {
 
 router.post("/alertas-vencimentos", validarCronSecret, async (req: Request, res: Response) => {
   try {
-    const resultado = await enviarAlertas();
-    res.json(resultado);
-
-    console.log(`[CRON] Alertas: ${resultado.alertas_enviados} enviados, ${resultado.erros} erros`);
+    // Roda pra cada loja (multi-tenant), cada uma no seu banco
+    const tenants = getTenants();
+    const porLoja = [];
+    for (const t of tenants) {
+      const resultado = await supabase.runWithTenant(
+        { url: t.url, key: t.key, schema: t.schema },
+        () => enviarAlertas()
+      );
+      porLoja.push({ loja: t.id, ...resultado });
+      console.log(`[CRON] Alertas [${t.id}]: ${resultado.alertas_enviados} enviados, ${resultado.erros} erros`);
+    }
+    res.json({ lojas: porLoja });
   } catch (err) {
     console.error("[CRON] Erro ao enviar alertas:", err);
     res.status(500).json({
