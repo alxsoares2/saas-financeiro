@@ -6,11 +6,16 @@ let supabase: any = null;
 
 function getSupabase() {
   if (!supabase) {
-    supabase = createClient(
-      process.env.SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_KEY!,
-      { db: { schema: "financeiro" } }
-    );
+    const url = process.env.SUPABASE_URL!;
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+
+    if (!url || !key) {
+      throw new Error(
+        `Supabase credentials missing: URL=${!!url}, KEY=${!!key}`
+      );
+    }
+
+    supabase = createClient(url, key, { db: { schema: "financeiro" } });
   }
   return supabase;
 }
