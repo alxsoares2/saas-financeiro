@@ -218,19 +218,43 @@ export async function gerarRelatorioContas(
 
   doc.moveDown(1);
 
-  // Tabela de lançamentos
+  // Tabela de lançamentos com células desenhadas
   doc.fontSize(12).font("Helvetica-Bold").text("LANÇAMENTOS");
-  doc.moveDown(0.4);
+  doc.moveDown(0.5);
+
+  // Dimensões das colunas
+  const x1 = 50;     // Data
+  const x2 = 130;    // Categoria
+  const x3 = 350;    // Valor
+  const x4 = 460;    // Situação
+
+  const colWidth1 = x2 - x1;      // 80
+  const colWidth2 = x3 - x2;      // 220
+  const colWidth3 = x4 - x3;      // 110
+  const colWidth4 = 540 - x4;     // 80
+
+  const rowHeight = 18;
 
   // Cabeçalho
-  doc.fontSize(10).font("Helvetica-Bold").text("Data         Categoria                        Valor      Situação");
-  doc.moveDown(0.2);
-  doc.moveTo(50, doc.y).lineTo(520, doc.y).stroke();
-  doc.moveDown(0.3);
+  doc.fontSize(9).font("Helvetica-Bold");
+  const headerY = doc.y;
+  doc.rect(x1, headerY, colWidth1, rowHeight).fillAndStroke("f0f0f0", "000000");
+  doc.rect(x2, headerY, colWidth2, rowHeight).fillAndStroke("f0f0f0", "000000");
+  doc.rect(x3, headerY, colWidth3, rowHeight).fillAndStroke("f0f0f0", "000000");
+  doc.rect(x4, headerY, colWidth4, rowHeight).fillAndStroke("f0f0f0", "000000");
+
+  doc.text("Data", x1 + 5, headerY + 5, { width: colWidth1 - 10 });
+  doc.text("Categoria", x2 + 5, headerY + 5, { width: colWidth2 - 10 });
+  doc.text("Valor", x3 + 5, headerY + 5, { width: colWidth3 - 10 });
+  doc.text("Situação", x4 + 5, headerY + 5, { width: colWidth4 - 10 });
+
+  doc.moveDown(1.5);
 
   // Linhas de dados
-  doc.fontSize(10).font("Helvetica");
+  doc.fontSize(9).font("Helvetica");
   let contagem = 0;
+  let dataY = doc.y;
+
   lancamentos.forEach((item: any, idx: number) => {
     contagem++;
     let situacao = "?";
@@ -248,19 +272,29 @@ export async function gerarRelatorioContas(
     const dataRaw = item.data_emissao;
     const data = dataRaw ? formatarData(dataRaw) : "—";
 
-    // Log dos primeiros 3 itens para debug
     if (idx < 3) {
       console.log(`[relatorio] Item ${idx}: data_emissao="${dataRaw}" -> formatada="${data}"`);
     }
 
-    const categoria = (item.categoria || "—").substring(0, 28).padEnd(28);
-    const valor = `R$ ${Number(item.valor).toFixed(2)}`.padStart(11);
+    const categoria = (item.categoria || "—").substring(0, 35);
+    const valor = `R$ ${Number(item.valor).toFixed(2)}`;
 
-    const linha = `${data}   ${categoria}  ${valor}  ${situacao}`;
-    doc.text(linha);
+    // Desenhar células
+    doc.rect(x1, dataY, colWidth1, rowHeight).stroke();
+    doc.rect(x2, dataY, colWidth2, rowHeight).stroke();
+    doc.rect(x3, dataY, colWidth3, rowHeight).stroke();
+    doc.rect(x4, dataY, colWidth4, rowHeight).stroke();
+
+    // Escrever conteúdo
+    doc.text(data, x1 + 5, dataY + 4, { width: colWidth1 - 10 });
+    doc.text(categoria, x2 + 5, dataY + 4, { width: colWidth2 - 10 });
+    doc.text(valor, x3 + 5, dataY + 4, { width: colWidth3 - 10, align: "right" });
+    doc.text(situacao, x4 + 5, dataY + 4, { width: colWidth4 - 10 });
+
+    dataY += rowHeight;
   });
 
-  console.log(`[relatorio] Total de ${contagem} lançamentos renderizados`);
+  console.log(`[relatorio] Total de ${contagem} lançamentos renderizados em tabela`);
 
   try {
     console.log("[relatorio] Finalizando PDF...");
