@@ -1,10 +1,15 @@
-import Anthropic from "@anthropic-ai/sdk";
+import OpenAI from "openai";
 import { ExtractedDocument, ExtracaoMultipla } from "../types.js";
 
-let _client: Anthropic | null = null;
+let _client: OpenAI | null = null;
 
-function getClient(): Anthropic {
-  if (!_client) _client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+function getClient(): OpenAI {
+  if (!_client) {
+    _client = new OpenAI({
+      apiKey: process.env.DEEPSEEK_API_KEY,
+      baseURL: "https://api.deepseek.com/v1",
+    });
+  }
   return _client;
 }
 
@@ -72,16 +77,16 @@ function parseExtraction(raw: string): ExtractedDocument | null {
   return parsed as ExtractedDocument;
 }
 
-async function callHaiku(messages: Anthropic.MessageParam[]): Promise<string> {
-  const response = await getClient().messages.create({
-    model: "claude-haiku-4-5",
+async function callHaiku(messages: OpenAI.ChatCompletionMessageParam[]): Promise<string> {
+  const response = await getClient().chat.completions.create({
+    model: "deepseek-vision",
     max_tokens: 1024,
     system: EXTRACTION_SYSTEM,
     messages,
-  });
-  const textBlock = response.content.find((b) => b.type === "text");
-  if (!textBlock || textBlock.type !== "text") throw new Error("Claude não retornou texto");
-  return textBlock.text;
+  } as any);
+  const textContent = response.choices[0]?.message?.content;
+  if (!textContent) throw new Error("DeepSeek não retornou texto");
+  return typeof textContent === "string" ? textContent : textContent[0]?.text || "";
 }
 
 export async function extractFromImage(
@@ -232,29 +237,29 @@ function parseMulti(raw: string): ExtracaoMultipla | null {
   }
 }
 
-async function callHaikuMulti(messages: Anthropic.MessageParam[]): Promise<string> {
-  const response = await getClient().messages.create({
-    model: "claude-haiku-4-5",
+async function callHaikuMulti(messages: OpenAI.ChatCompletionMessageParam[]): Promise<string> {
+  const response = await getClient().chat.completions.create({
+    model: "deepseek-vision",
     max_tokens: 2048,
     system: EXTRACTION_MULTI_SYSTEM,
     messages,
-  });
-  const textBlock = response.content.find((b) => b.type === "text");
-  if (!textBlock || textBlock.type !== "text") throw new Error("Claude não retornou texto");
-  return textBlock.text;
+  } as any);
+  const textContent = response.choices[0]?.message?.content;
+  if (!textContent) throw new Error("DeepSeek não retornou texto");
+  return typeof textContent === "string" ? textContent : textContent[0]?.text || "";
 }
 
-// Sonnet para imagens — visão superior a Haiku em cupons térmicos e documentos complexos
-async function callSonnetMulti(messages: Anthropic.MessageParam[]): Promise<string> {
-  const response = await getClient().messages.create({
-    model: "claude-sonnet-4-6",
+// DeepSeek Vision para imagens
+async function callSonnetMulti(messages: OpenAI.ChatCompletionMessageParam[]): Promise<string> {
+  const response = await getClient().chat.completions.create({
+    model: "deepseek-vision",
     max_tokens: 2048,
     system: EXTRACTION_MULTI_SYSTEM,
     messages,
-  });
-  const textBlock = response.content.find((b) => b.type === "text");
-  if (!textBlock || textBlock.type !== "text") throw new Error("Claude não retornou texto");
-  return textBlock.text;
+  } as any);
+  const textContent = response.choices[0]?.message?.content;
+  if (!textContent) throw new Error("DeepSeek não retornou texto");
+  return typeof textContent === "string" ? textContent : textContent[0]?.text || "";
 }
 
 export async function extractMultiFromImage(
@@ -301,15 +306,15 @@ Analise:
 3. O que melhorou
 4. 2-3 ações práticas que o dono pode tomar agora`;
 
-  const response = await getClient().messages.create({
-    model: "claude-haiku-4-5",
+  const response = await getClient().chat.completions.create({
+    model: "deepseek-chat",
     max_tokens: 1024,
     system: ANALISE_SYSTEM,
     messages: [{ role: "user", content: prompt }],
-  });
-  const block = response.content.find((b) => b.type === "text");
-  if (!block || block.type !== "text") throw new Error("Claude não retornou análise");
-  return block.text;
+  } as any);
+  const textContent = response.choices[0]?.message?.content;
+  if (!textContent) throw new Error("DeepSeek não retornou análise");
+  return typeof textContent === "string" ? textContent : textContent[0]?.text || "";
 }
 
 export async function extractMultiFromPDF(pdfBuffer: Buffer): Promise<ExtracaoMultipla | null> {
