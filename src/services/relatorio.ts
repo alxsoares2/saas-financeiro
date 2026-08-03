@@ -6,16 +6,24 @@ let supabase: any = null;
 
 function getSupabase() {
   if (!supabase) {
-    const url = process.env.SUPABASE_URL!;
-    const key = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+    const url = process.env.SUPABASE_URL;
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-    if (!url || !key) {
+    console.log("[relatorio] Iniciando Supabase client:");
+    console.log(`  SUPABASE_URL: ${url ? "OK" : "MISSING"}`);
+    console.log(`  SUPABASE_SERVICE_ROLE_KEY: ${key ? "OK" : "MISSING"}`);
+
+    if (!url) {
+      throw new Error("SUPABASE_URL não está configurado no .env");
+    }
+    if (!key) {
       throw new Error(
-        `Supabase credentials missing: URL=${!!url}, KEY=${!!key}`
+        "SUPABASE_SERVICE_ROLE_KEY não está configurado no .env (deve ser o mesmo do .env.example)"
       );
     }
 
     supabase = createClient(url, key, { db: { schema: "financeiro" } });
+    console.log("[relatorio] Cliente Supabase criado com sucesso");
   }
   return supabase;
 }
