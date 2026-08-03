@@ -3,15 +3,13 @@
 // Cada loja tem seu próprio banco Supabase (url + key) e é identificada pelo
 // grupo do WhatsApp (grupoId). O app roteia cada mensagem pra loja certa.
 //
-// Configuração via env var TENANTS (JSON). Exemplo:
-//   TENANTS=[
-//     {"id":"mano","grupo":"5511...@g.us","supabaseUrl":"https://xxx.supabase.co","supabaseKey":"eyJ..."},
-//     {"id":"basilico","grupo":"5511...@g.us","supabaseUrl":"https://yyy.supabase.co","supabaseKey":"eyJ..."}
-//   ]
+// A loja PRIMÁRIA (ex: Mano) vem das env vars que já existem —
+// SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY / GRUPO_FINANCEIRO_ID.
+// Ela NÃO muda: continua funcionando exatamente como hoje.
 //
-// Se TENANTS não estiver definida, cai no modo LEGADO (uma loja só), lendo
-// SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY / GRUPO_FINANCEIRO_ID — assim o
-// Mano continua funcionando sem mudar nenhuma env var.
+// Lojas ADICIONAIS (ex: Basílico) vêm da env var TENANTS (JSON array).
+// Assim você adiciona uma loja nova sem tocar na config da loja que já roda:
+//   TENANTS=[{"id":"basilico","grupo":"120...-group","supabaseUrl":"https://yyy.supabase.co","supabaseKey":"eyJ..."}]
 
 export interface Tenant {
   id: string;
@@ -26,29 +24,35 @@ let _cache: Tenant[] | null = null;
 export function getTenants(): Tenant[] {
   if (_cache) return _cache;
 
+  const tenants: Tenant[] = [];
+
+  // 1. Loja primária (legado) — Mano, das env vars atuais
+  if (process.env.SUPABASE_URL) {
+    tenants.push({
+      id: process.env.PRIMARY_TENANT_ID || "mano",
+      grupoId: process.env.GRUPO_FINANCEIRO_ID ?? "",
+      url: process.env.SUPABASE_URL,
+      key: process.env.SUPABASE_SERVICE_ROLE_KEY!,
+      schema: process.env.SUPABASE_SCHEMA || "financeiro",
+    });
+  }
+
+  // 2. Lojas adicionais — Basílico e futuros, da env TENANTS
   const raw = process.env.TENANTS;
   if (raw && raw.trim()) {
     const arr = JSON.parse(raw);
-    _cache = arr.map((t: any) => ({
-      id: t.id,
-      grupoId: t.grupo ?? "",
-      url: t.supabaseUrl,
-      key: t.supabaseKey,
-      schema: t.schema || "financeiro",
-    }));
-    return _cache!;
+    for (const t of arr) {
+      tenants.push({
+        id: t.id,
+        grupoId: t.grupo ?? "",
+        url: t.supabaseUrl,
+        key: t.supabaseKey,
+        schema: t.schema || "financeiro",
+      });
+    }
   }
 
-  // Modo legado — uma loja só (Mano intacto)
-  _cache = [
-    {
-      id: "default",
-      grupoId: process.env.GRUPO_FINANCEIRO_ID ?? "",
-      url: process.env.SUPABASE_URL!,
-      key: process.env.SUPABASE_SERVICE_ROLE_KEY!,
-      schema: process.env.SUPABASE_SCHEMA || "financeiro",
-    },
-  ];
+  _cache = tenants;
   return _cache;
 }
 
