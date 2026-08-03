@@ -66,9 +66,12 @@ export async function gerarRelatorioContas(
   console.log("[relatorio] Buscando categorias...");
   let categorias: any[] = [];
   try {
+    console.log("[relatorio] Query: SELECT id, nome FROM categorias");
     const result = await sb
       .from("categorias")
       .select("id, nome");
+
+    console.log("[relatorio] Response recebido, error:", result.error?.message || "nenhum erro");
 
     if (result.error) {
       console.error("[relatorio] Erro ao buscar categorias:", result.error);
@@ -76,9 +79,13 @@ export async function gerarRelatorioContas(
     } else {
       categorias = result.data || [];
       console.log(`[relatorio] Encontradas ${categorias.length} categorias`);
+      if (categorias.length > 0) {
+        console.log("[relatorio] Primeira categoria:", JSON.stringify(categorias[0]));
+      }
     }
   } catch (err) {
     console.error("[relatorio] Exceção ao buscar categorias:", err);
+    throw err;
   }
 
   const categoriasMap = new Map(
