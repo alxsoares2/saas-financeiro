@@ -47,18 +47,31 @@ export async function gerarRelatorioContas(
   let mesLabel = "";
 
   const sb = getSupabase();
+  console.log("[relatorio] Iniciando geração de relatório...");
 
   // Buscar categorias para mapping
-  const { data: categorias, error: catError } = await sb
-    .from("categorias")
-    .select("id, nome");
+  console.log("[relatorio] Buscando categorias...");
+  let categorias: any[] = [];
+  try {
+    const result = await sb
+      .from("categorias")
+      .select("id, nome");
 
-  if (catError) {
-    console.error("[relatorio] Erro ao buscar categorias:", catError);
+    if (result.error) {
+      console.error("[relatorio] Erro ao buscar categorias:", result.error);
+      console.log("[relatorio] Continuando sem categorias...");
+    } else {
+      categorias = result.data || [];
+      console.log(`[relatorio] Encontradas ${categorias.length} categorias`);
+    }
+  } catch (err) {
+    console.error("[relatorio] Exceção ao buscar categorias:", err);
   }
+
   const categoriasMap = new Map(
     (categorias || []).map((c: any) => [c.id, c.nome])
   );
+  console.log(`[relatorio] Mapa de categorias pronto: ${categoriasMap.size} entradas`);
 
   if (mes && ano) {
     // Relatório de um mês específico
@@ -67,42 +80,48 @@ export async function gerarRelatorioContas(
 
     console.log(`[relatorio] Buscando lançamentos de ${dataInicio} a ${dataFim}`);
 
-    let { data: lancamentosData, error } = await sb
+    console.log(`[relatorio] Query de período: ${dataInicio} a ${dataFim}`);
+    const result = await sb
       .from("lancamentos")
       .select("*")
       .gte("data_emissao", dataInicio)
-      .lt("data_emissao", dataFim)
-      .order("data_vencimento", { ascending: true });
+      .lt("data_emissao", dataFim);
 
-    if (error) {
-      console.error("[relatorio] Erro ao buscar lançamentos:", error);
-      throw new Error(`Supabase query error: ${error.message}`);
+    if (result.error) {
+      console.error("[relatorio] Erro ao buscar lançamentos:", result.error);
+      throw new Error(`Supabase query error: ${result.error.message}`);
     }
+
+    const lancamentosData = result.data || [];
+    console.log(`[relatorio] Query retornou ${lancamentosData.length} registros`);
+
     lancamentos = (lancamentosData || []).map((l: any) => ({
       ...l,
       categoria: categoriasMap.get(l.categoria_id) || "Sem categoria",
     }));
-    console.log(`[relatorio] Encontrados ${lancamentos.length} lançamentos`);
+    console.log(`[relatorio] Encontrados ${lancamentos.length} lançamentos após mapping`);
     mesLabel = `${getMesNome(mes)} de ${ano}`;
   } else {
     // Relatório GERAL (todos os meses)
     console.log("[relatorio] Buscando todos os lançamentos (relatório geral)");
 
-    let { data: lancamentosData, error } = await sb
+    const result = await sb
       .from("lancamentos")
-      .select("*")
-      .order("data_emissao", { ascending: false })
-      .order("data_vencimento", { ascending: true });
+      .select("*");
 
-    if (error) {
-      console.error("[relatorio] Erro ao buscar lançamentos geral:", error);
-      throw new Error(`Supabase query error: ${error.message}`);
+    if (result.error) {
+      console.error("[relatorio] Erro ao buscar lançamentos geral:", result.error);
+      throw new Error(`Supabase query error: ${result.error.message}`);
     }
+
+    const lancamentosData = result.data || [];
+    console.log(`[relatorio] Query geral retornou ${lancamentosData.length} registros`);
+
     lancamentos = (lancamentosData || []).map((l: any) => ({
       ...l,
       categoria: categoriasMap.get(l.categoria_id) || "Sem categoria",
     }));
-    console.log(`[relatorio] Encontrados ${lancamentos.length} lançamentos (geral)`);
+    console.log(`[relatorio] Encontrados ${lancamentos.length} lançamentos após mapping (geral)`);
     mesLabel = "GERAL (Todos os meses)";
   }
 
