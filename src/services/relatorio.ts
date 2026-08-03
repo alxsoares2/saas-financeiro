@@ -230,7 +230,9 @@ export async function gerarRelatorioContas(
   doc.moveDown(0.2);
 
   // Linhas de dados
-  lancamentos.forEach((item: any) => {
+  let contagem = 0;
+  lancamentos.forEach((item: any, idx: number) => {
+    contagem++;
     let situacao = "?";
 
     if (item.status === "pago" || item.status === "pago_parcialmente") {
@@ -243,13 +245,22 @@ export async function gerarRelatorioContas(
       }
     }
 
-    const data = item.data_emissao ? formatarData(item.data_emissao) : "—";
+    const dataRaw = item.data_emissao;
+    const data = dataRaw ? formatarData(dataRaw) : "—";
+
+    // Log dos primeiros 3 itens para debug
+    if (idx < 3) {
+      console.log(`[relatorio] Item ${idx}: data_emissao="${dataRaw}" -> formatada="${data}"`);
+    }
+
     const categoria = (item.categoria || "—").substring(0, 20).padEnd(20);
     const valor = `R$ ${Number(item.valor).toFixed(2)}`.padStart(13);
 
     const linha = `${data}  ${categoria}  ${valor}  ${situacao}`;
     doc.text(linha);
   });
+
+  console.log(`[relatorio] Total de ${contagem} lançamentos renderizados`);
 
   try {
     console.log("[relatorio] Finalizando PDF...");
