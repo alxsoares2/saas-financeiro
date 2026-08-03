@@ -2,10 +2,17 @@ import PDFDocument from "pdfkit";
 import { createClient } from "@supabase/supabase-js";
 import { Readable } from "stream";
 
-const supabase = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_KEY!
-);
+let supabase: any = null;
+
+function getSupabase() {
+  if (!supabase) {
+    supabase = createClient(
+      process.env.SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_KEY!
+    );
+  }
+  return supabase;
+}
 
 interface Lancamento {
   id: string;
@@ -36,9 +43,11 @@ export async function gerarRelatorioContas(
   let lancamentos: any[] = [];
   let mesLabel = "";
 
+  const sb = getSupabase();
+
   if (mes && ano) {
     // Relatório de um mês específico
-    let { data: lancamentosData, error } = await supabase
+    let { data: lancamentosData, error } = await sb
       .from("lancamentos")
       .select("*")
       .eq("mes", mes)
@@ -53,7 +62,7 @@ export async function gerarRelatorioContas(
     mesLabel = `${getMesNome(mes)} de ${ano}`;
   } else {
     // Relatório GERAL (todos os meses)
-    let { data: lancamentosData, error } = await supabase
+    let { data: lancamentosData, error } = await sb
       .from("lancamentos")
       .select("*")
       .order("ano", { ascending: false })
