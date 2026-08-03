@@ -167,9 +167,9 @@ export async function gerarRelatorioContas(
   // Resumo de totais
   doc.fontSize(11).font("Helvetica-Bold").text("RESUMO");
   doc.fontSize(10).font("Helvetica");
-  doc.text(`✅ Pago: R$ ${totalPago.toFixed(2)}`);
-  doc.text(`⏳ A Pagar: R$ ${totalAPagar.toFixed(2)}`);
-  doc.text(`⚠️  Vencido: R$ ${totalVencido.toFixed(2)}`);
+  doc.text(`[PAGO] R$ ${totalPago.toFixed(2)}`);
+  doc.text(`[A PAGAR] R$ ${totalAPagar.toFixed(2)}`);
+  doc.text(`[VENCIDO] R$ ${totalVencido.toFixed(2)}`);
   doc.text(`────────────────────────`);
   doc.text(
     `TOTAL: R$ ${(totalPago + totalAPagar + totalVencido).toFixed(2)}`,
@@ -212,24 +212,20 @@ export async function gerarRelatorioContas(
       // Linhas de dados
       doc.fontSize(8).font("Helvetica");
       items.forEach((item: any) => {
-        let statusEmoji = "❓";
-        let statusLabel = "Desconhecido";
+        let statusLabel = "?";
 
         if (item.status === "pago" || item.status === "pago_parcialmente") {
-          statusEmoji = item.status === "pago" ? "✅" : "⚠️ Parcial";
-          statusLabel = item.status === "pago" ? "Pago" : "Pago Parcialmente";
+          statusLabel = item.status === "pago" ? "P" : "PP";
         } else if (item.status === "pendente") {
           if (item.data_vencimento && new Date(item.data_vencimento) < new Date()) {
-            statusEmoji = "🔴";
-            statusLabel = "Vencido";
+            statusLabel = "V";
           } else {
-            statusEmoji = "⏳";
-            statusLabel = "Pendente";
+            statusLabel = "A";
           }
         }
 
         x = 40;
-        doc.text(statusEmoji, x, doc.y, { width: colunas.status });
+        doc.text(statusLabel, x, doc.y, { width: colunas.status });
         x += colunas.status;
         doc.text(item.descricao || "—", x, doc.y - 12, {
           width: colunas.descricao,
