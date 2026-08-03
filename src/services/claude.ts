@@ -1,7 +1,6 @@
 import OpenAI from "openai";
+import * as pdfjsLib from "pdfjs-dist";
 import { ExtractedDocument, ExtracaoMultipla } from "../types.js";
-
-const pdfParse = require("pdf-parse");
 
 let _client: OpenAI | null = null;
 
@@ -328,10 +327,17 @@ export async function extractMultiFromPDF(pdfBuffer: Buffer): Promise<ExtracaoMu
   console.log(`[OpenAI] Iniciando extração de PDF (${sizeKB}KB)`);
 
   try {
-    // Extrai texto do PDF usando pdf-parse
-    const pdfData = await pdfParse(pdfBuffer);
-    const pdfText = pdfData.text;
-    console.log(`[OpenAI] PDF convertido para texto (${pdfText.length} caracteres)`);
+    // Extrai texto do PDF usando pdf.js
+    const pdf = await pdfjsLib.getDocument({ data: pdfBuffer }).promise;
+    let pdfText = "";
+
+    for (let i = 1; i <= Math.min(pdf.numPages, 5); i++) {
+      const page = await pdf.getPage(i);
+      const textContent = await page.getTextContent();
+      pdfText += textContent.items.map((item: any) => item.str).join("") + "\n";
+    }
+
+    console.log(`[OpenAI] PDF convertido para texto (${pdfText.length} caracteres, ${pdf.numPages} páginas)`);
 
     const timeoutPromise = new Promise<never>((_, reject) =>
       setTimeout(() => reject(new Error("Timeout na extração de PDF (> 60s)")), 60000)
