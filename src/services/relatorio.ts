@@ -235,27 +235,11 @@ export async function gerarRelatorioContas(
 
   const rowHeight = 18;
 
-  // Cabeçalho da tabela
-  console.log("[relatorio] Renderizando cabeçalho da tabela...");
-  const headerY = doc.y;
+  // Cabeçalho em texto simples (sem células complexas)
+  console.log("[relatorio] Renderizando cabeçalho...");
   doc.fontSize(11).font("Helvetica-Bold").fillColor("000000");
-
-  // Desenhar células do cabeçalho
-  doc.rect(x1, headerY, colWidth1, rowHeight).fillAndStroke("cccccc", "000000");
-  doc.rect(x2, headerY, colWidth2, rowHeight).fillAndStroke("cccccc", "000000");
-  doc.rect(x3, headerY, colWidth3, rowHeight).fillAndStroke("cccccc", "000000");
-  doc.rect(x4, headerY, colWidth4, rowHeight).fillAndStroke("cccccc", "000000");
-
-  // Escrever cabeçalho com posicionamento correto (sem sobreposição)
-  const textY = headerY + 3;
-  doc.text("DATA", x1 + 5, textY);
-  doc.text("DESCRIÇÃO", x2 + 5, textY);
-  doc.text("VALOR", x3 + 5, textY);
-  doc.text("SITUAÇÃO", x4 + 5, textY);
-
-  console.log("[relatorio] Cabeçalho renderizado");
-  doc.y = headerY + rowHeight;
-  doc.moveDown(0.3);
+  doc.text("DATA                 DESCRIÇÃO                                  VALOR            SITUAÇÃO");
+  doc.moveDown(0.5);
 
   // Linhas de dados
   doc.fontSize(9).font("Helvetica");
