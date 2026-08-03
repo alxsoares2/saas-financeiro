@@ -6,7 +6,8 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "test": "jest"
+    "test": "jest",
+    "monitor-deploy": "tsx scripts/monitor-deploy.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",

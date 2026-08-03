@@ -1,0 +1,45 @@
+{
+  "monitorEnabled": true,
+  "checkInterval": 5000,
+  "maxRetries": 3,
+  "autoFixes": [
+    {
+      "errorPattern": "supabaseKey is required",
+      "description": "Supabase env var não configurado",
+      "fix": "Verificar SUPABASE_URL e SUPABASE_SERVICE_KEY no Railway"
+    },
+    {
+      "errorPattern": "Cannot find module",
+      "description": "Módulo não importado ou não instalado",
+      "fix": "npm install e verificar imports"
+    },
+    {
+      "errorPattern": "ENOENT",
+      "description": "Arquivo ou diretório não encontrado",
+      "fix": "Verificar paths e criar arquivos necessários"
+    },
+    {
+      "errorPattern": "build failed",
+      "description": "Build falhou - erro de TypeScript ou dependência",
+      "fix": "npm run build localmente, corrigir erros, re-push"
+    },
+    {
+      "errorPattern": "ERR_MODULE_NOT_FOUND",
+      "description": "Módulo não instalado",
+      "fix": "npm install --save [module] e re-push"
+    },
+    {
+      "errorPattern": "Process exited",
+      "description": "Aplicação crashou",
+      "fix": "Verificar logs completos e identificar erro"
+    }
+  ],
+  "notificationChannels": [
+    {
+      "type": "whatsapp",
+      "enabled": true,
+      "chatId": "120363144139588563-group",
+      "messageTemplate": "⚠️ Deploy falhou: {error}\n\nTentando correção automática..."
+    }
+  ]
+}
