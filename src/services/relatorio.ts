@@ -107,43 +107,54 @@ export async function gerarRelatorioContas(
   }
 
   // Agrupa por categoria e calcula totais
+  console.log("[relatorio] Agrupando por categoria...");
   const porCategoria: Record<string, Lancamento[]> = {};
   let totalPago = 0;
   let totalAPagar = 0;
   let totalVencido = 0;
 
-  (lancamentos || []).forEach((l: any) => {
-    const categoria = l.categoria || "Sem categoria";
-    if (!porCategoria[categoria]) {
-      porCategoria[categoria] = [];
-    }
-    porCategoria[categoria].push(l);
+  try {
+    (lancamentos || []).forEach((l: any) => {
+      const categoria = l.categoria || "Sem categoria";
+      if (!porCategoria[categoria]) {
+        porCategoria[categoria] = [];
+      }
+      porCategoria[categoria].push(l);
 
-    // Calcula totais baseado no status e data
-    if (l.status === "pago" || l.status === "pago_parcialmente") {
-      totalPago += l.valor_pago || 0;
-      const pendente = l.valor - (l.valor_pago || 0);
-      if (pendente > 0) {
+      // Calcula totais baseado no status e data
+      if (l.status === "pago" || l.status === "pago_parcialmente") {
+        totalPago += Number(l.valor_pago) || 0;
+        const pendente = Number(l.valor) - (Number(l.valor_pago) || 0);
+        if (pendente > 0) {
+          if (l.data_vencimento && new Date(l.data_vencimento) < new Date()) {
+            totalVencido += pendente;
+          } else {
+            totalAPagar += pendente;
+          }
+        }
+      } else if (l.status === "pendente") {
         if (l.data_vencimento && new Date(l.data_vencimento) < new Date()) {
-          totalVencido += pendente;
+          totalVencido += Number(l.valor);
         } else {
-          totalAPagar += pendente;
+          totalAPagar += Number(l.valor);
         }
       }
-    } else if (l.status === "pendente") {
-      if (l.data_vencimento && new Date(l.data_vencimento) < new Date()) {
-        totalVencido += l.valor;
-      } else {
-        totalAPagar += l.valor;
-      }
-    }
-  });
+    });
+    console.log(`[relatorio] Agrupamento concluído: ${Object.keys(porCategoria).length} categorias`);
+  } catch (err) {
+    console.error("[relatorio] Erro ao agrupar:", err);
+    throw err;
+  }
 
   // Gera PDF
+  console.log("[relatorio] Iniciando geração do PDF...");
   const doc = new PDFDocument({ margin: 40 });
   const chunks: Buffer[] = [];
 
   doc.on("data", (chunk: Buffer) => chunks.push(chunk));
+  doc.on("error", (err: Error) => {
+    console.error("[relatorio] Erro no evento 'data' do PDF:", err);
+  });
 
   // Cabeçalho
   doc.fontSize(20).font("Helvetica-Bold").text("RELATÓRIO DE CONTAS");
@@ -242,13 +253,30 @@ export async function gerarRelatorioContas(
       doc.moveDown(0.5);
     });
 
-  doc.end();
+  try {
+    console.log("[relatorio] Finalizando PDF...");
+    doc.end();
+  } catch (err) {
+    console.error("[relatorio] Erro ao chamar doc.end():", err);
+    throw err;
+  }
 
   return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      console.error("[relatorio] Timeout ao gerar PDF (>10s)");
+      reject(new Error("PDF generation timeout"));
+    }, 10000);
+
     doc.on("end", () => {
+      clearTimeout(timeout);
+      console.log(`[relatorio] PDF gerado com sucesso: ${chunks.length} chunks, ${Buffer.concat(chunks).length} bytes`);
       resolve(Buffer.concat(chunks));
     });
-    doc.on("error", reject);
+    doc.on("error", (err: Error) => {
+      clearTimeout(timeout);
+      console.error("[relatorio] Erro ao gerar PDF:", err);
+      reject(err);
+    });
   });
 }
 
