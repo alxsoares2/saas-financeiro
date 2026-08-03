@@ -77,7 +77,7 @@ function parseExtraction(raw: string): ExtractedDocument | null {
   return parsed as ExtractedDocument;
 }
 
-async function callHaiku(messages: OpenAI.ChatCompletionMessageParam[]): Promise<string> {
+async function callHaiku(messages: any[]): Promise<string> {
   const response = await getClient().chat.completions.create({
     model: "deepseek-vision",
     max_tokens: 1024,
@@ -86,7 +86,7 @@ async function callHaiku(messages: OpenAI.ChatCompletionMessageParam[]): Promise
   } as any);
   const textContent = response.choices[0]?.message?.content;
   if (!textContent) throw new Error("DeepSeek não retornou texto");
-  return typeof textContent === "string" ? textContent : textContent[0]?.text || "";
+  return typeof textContent === "string" ? textContent : "";
 }
 
 export async function extractFromImage(
@@ -102,7 +102,7 @@ export async function extractFromImage(
     {
       role: "user",
       content: [
-        { type: "image", source: { type: "base64", media_type: mimeType, data: base64 } },
+        { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64}` } },
         { type: "text", text: contexto },
       ],
     },
@@ -115,10 +115,7 @@ export async function extractFromPDF(pdfBuffer: Buffer): Promise<ExtractedDocume
   const text = await callHaiku([
     {
       role: "user",
-      content: [
-        { type: "document", source: { type: "base64", media_type: "application/pdf", data: base64 } },
-        { type: "text", text: "Extraia os dados financeiros deste documento PDF." },
-      ],
+      content: `[PDF Base64]\ndata:application/pdf;base64,${base64}\n\nExtraía os dados financeiros deste documento PDF.`,
     },
   ]);
   return parseExtraction(text);
@@ -237,7 +234,7 @@ function parseMulti(raw: string): ExtracaoMultipla | null {
   }
 }
 
-async function callHaikuMulti(messages: OpenAI.ChatCompletionMessageParam[]): Promise<string> {
+async function callHaikuMulti(messages: any[]): Promise<string> {
   const response = await getClient().chat.completions.create({
     model: "deepseek-vision",
     max_tokens: 2048,
@@ -246,11 +243,11 @@ async function callHaikuMulti(messages: OpenAI.ChatCompletionMessageParam[]): Pr
   } as any);
   const textContent = response.choices[0]?.message?.content;
   if (!textContent) throw new Error("DeepSeek não retornou texto");
-  return typeof textContent === "string" ? textContent : textContent[0]?.text || "";
+  return typeof textContent === "string" ? textContent : "";
 }
 
 // DeepSeek Vision para imagens
-async function callSonnetMulti(messages: OpenAI.ChatCompletionMessageParam[]): Promise<string> {
+async function callSonnetMulti(messages: any[]): Promise<string> {
   const response = await getClient().chat.completions.create({
     model: "deepseek-vision",
     max_tokens: 2048,
@@ -259,7 +256,7 @@ async function callSonnetMulti(messages: OpenAI.ChatCompletionMessageParam[]): P
   } as any);
   const textContent = response.choices[0]?.message?.content;
   if (!textContent) throw new Error("DeepSeek não retornou texto");
-  return typeof textContent === "string" ? textContent : textContent[0]?.text || "";
+  return typeof textContent === "string" ? textContent : "";
 }
 
 export async function extractMultiFromImage(
@@ -275,7 +272,7 @@ export async function extractMultiFromImage(
     {
       role: "user",
       content: [
-        { type: "image", source: { type: "base64", media_type: mimeType, data: base64 } },
+        { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64}` } },
         { type: "text", text: contexto },
       ],
     },
@@ -320,7 +317,7 @@ Analise:
 export async function extractMultiFromPDF(pdfBuffer: Buffer): Promise<ExtracaoMultipla | null> {
   const base64 = pdfBuffer.toString("base64");
   const sizeKB = Math.round(base64.length / 1024);
-  console.log(`[Claude] Iniciando extração de PDF (${sizeKB}KB) com Sonnet`);
+  console.log(`[DeepSeek] Iniciando extração de PDF (${sizeKB}KB)`);
 
   try {
     const timeoutPromise = new Promise<never>((_, reject) =>
@@ -330,18 +327,15 @@ export async function extractMultiFromPDF(pdfBuffer: Buffer): Promise<ExtracaoMu
     const extractionPromise = callSonnetMulti([
       {
         role: "user",
-        content: [
-          { type: "document", source: { type: "base64", media_type: "application/pdf", data: base64 } },
-          { type: "text", text: "Agrupe os itens do documento por categoria DRE. Se não conseguir estruturar, retorne os dados legíveis em um formato aproximado." },
-        ],
+        content: `[PDF Base64]\ndata:application/pdf;base64,${base64}\n\nAgrupe os itens do documento por categoria DRE. Se não conseguir estruturar, retorne os dados legíveis em um formato aproximado.`,
       },
     ]);
 
     const raw = await Promise.race([extractionPromise, timeoutPromise]);
-    console.log(`[Claude] Extração de PDF concluída`);
+    console.log(`[DeepSeek] Extração de PDF concluída`);
     return parseMulti(raw);
   } catch (err) {
-    console.error(`[Claude] Erro ao extrair PDF:`, err);
+    console.error(`[DeepSeek] Erro ao extrair PDF:`, err);
     return null;
   }
 }
