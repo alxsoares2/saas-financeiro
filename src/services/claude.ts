@@ -80,11 +80,13 @@ async function callHaiku(messages: any[]): Promise<string> {
   const response = await getClient().chat.completions.create({
     model: "gpt-4o-mini",
     max_tokens: 1024,
-    system: EXTRACTION_SYSTEM,
-    messages,
+    messages: [
+      { role: "system", content: EXTRACTION_SYSTEM },
+      ...messages,
+    ],
   } as any);
   const textContent = response.choices[0]?.message?.content;
-  if (!textContent) throw new Error("DeepSeek não retornou texto");
+  if (!textContent) throw new Error("OpenAI não retornou texto");
   return typeof textContent === "string" ? textContent : "";
 }
 
@@ -237,24 +239,28 @@ async function callHaikuMulti(messages: any[]): Promise<string> {
   const response = await getClient().chat.completions.create({
     model: "gpt-4o-mini",
     max_tokens: 2048,
-    system: EXTRACTION_MULTI_SYSTEM,
-    messages,
+    messages: [
+      { role: "system", content: EXTRACTION_MULTI_SYSTEM },
+      ...messages,
+    ],
   } as any);
   const textContent = response.choices[0]?.message?.content;
-  if (!textContent) throw new Error("DeepSeek não retornou texto");
+  if (!textContent) throw new Error("OpenAI não retornou texto");
   return typeof textContent === "string" ? textContent : "";
 }
 
-// DeepSeek Vision para imagens
+// GPT-4o Mini para imagens
 async function callSonnetMulti(messages: any[]): Promise<string> {
   const response = await getClient().chat.completions.create({
     model: "gpt-4o-mini",
     max_tokens: 2048,
-    system: EXTRACTION_MULTI_SYSTEM,
-    messages,
+    messages: [
+      { role: "system", content: EXTRACTION_MULTI_SYSTEM },
+      ...messages,
+    ],
   } as any);
   const textContent = response.choices[0]?.message?.content;
-  if (!textContent) throw new Error("DeepSeek não retornou texto");
+  if (!textContent) throw new Error("OpenAI não retornou texto");
   return typeof textContent === "string" ? textContent : "";
 }
 
@@ -303,13 +309,15 @@ Analise:
 4. 2-3 ações práticas que o dono pode tomar agora`;
 
   const response = await getClient().chat.completions.create({
-    model: "deepseek-chat",
+    model: "gpt-4o-mini",
     max_tokens: 1024,
-    system: ANALISE_SYSTEM,
-    messages: [{ role: "user", content: prompt }],
+    messages: [
+      { role: "system", content: ANALISE_SYSTEM },
+      { role: "user", content: prompt },
+    ],
   } as any);
   const textContent = response.choices[0]?.message?.content;
-  if (!textContent) throw new Error("DeepSeek não retornou análise");
+  if (!textContent) throw new Error("OpenAI não retornou análise");
   return typeof textContent === "string" ? textContent : "";
 }
 
