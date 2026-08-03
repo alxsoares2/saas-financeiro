@@ -1,5 +1,8 @@
 FROM node:22-alpine
 
+# Instala Poppler (pdftoppm) - leve e open source
+RUN apk add --no-cache poppler-utils
+
 WORKDIR /app
 
 COPY package*.json ./

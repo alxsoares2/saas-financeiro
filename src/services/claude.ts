@@ -1,14 +1,12 @@
 import OpenAI from "openai";
-import { v2 as cloudinary } from "cloudinary";
-import axios from "axios";
+import { exec } from "child_process";
+import { promisify } from "util";
+import { writeFileSync, readFileSync, unlinkSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import { ExtractedDocument, ExtracaoMultipla } from "../types.js";
 
-// Configura Cloudinary
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
-});
+const execAsync = promisify(exec);
 
 let _client: OpenAI | null = null;
 
@@ -332,47 +330,41 @@ Analise:
 
 export async function extractMultiFromPDF(pdfBuffer: Buffer): Promise<ExtracaoMultipla | null> {
   const sizeKB = Math.round(pdfBuffer.length / 1024);
-  console.log(`[Cloudinary] Iniciando conversão de PDF → PNG (${sizeKB}KB)`);
+  console.log(`[Poppler] Iniciando conversão de PDF → PNG (${sizeKB}KB)`);
+
+  const tmpDir = tmpdir();
+  const pdfPath = join(tmpDir, `doc-${Date.now()}.pdf`);
+  const pngPath = join(tmpDir, `doc-${Date.now()}`);
 
   try {
-    // Upload do PDF para Cloudinary (sem salvar localmente)
-    const uploadResponse = await new Promise<any>((resolve, reject) => {
-      const stream = cloudinary.uploader.upload_stream(
-        { resource_type: "raw", folder: "saas-financeiro-pdf" },
-        (error, result) => {
-          if (error) reject(error);
-          else resolve(result);
-        }
-      );
-      stream.end(pdfBuffer);
-    });
+    // Escreve PDF em arquivo temporário
+    writeFileSync(pdfPath, pdfBuffer);
 
-    console.log(`[Cloudinary] PDF uploaded: ${uploadResponse.public_id}`);
+    // Converte primeira página do PDF pra PNG usando pdftoppm (Poppler)
+    // pdftoppm entrada.pdf saida (gera saida-1.png, saida-2.png, etc.)
+    // -f 1 -l 1 = apenas primeira página; -png = formato PNG
+    await execAsync(`pdftoppm -f 1 -l 1 -png "${pdfPath}" "${pngPath}"`);
 
-    // Transforma primeira página do PDF em PNG usando Cloudinary transformation URL
-    const pngUrl = cloudinary.url(uploadResponse.public_id, {
-      resource_type: "raw",
-      fetch_format: "auto",
-      format: "png",
-      transformation: [
-        { page: 1, dpr: 1.5, quality: "auto" },
-      ],
-    });
-
-    // Faz download da imagem convertida
-    const imageResponse = await axios.get(pngUrl, { responseType: "arraybuffer" });
-    const pngBuffer = Buffer.from(imageResponse.data);
-    console.log(`[Cloudinary] PDF convertido para PNG (${Math.round(pngBuffer.length / 1024)}KB)`);
+    // Lê imagem convertida (pdftoppm gera arquivo com sufixo -1.png)
+    const convertedPath = `${pngPath}-1.png`;
+    const pngBuffer = readFileSync(convertedPath);
+    console.log(`[Poppler] PDF convertido para PNG (${Math.round(pngBuffer.length / 1024)}KB)`);
 
     // Processa como imagem normal
     const result = await extractMultiFromImage(pngBuffer, "image/png", "Documento extraído de PDF");
 
-    // Deleta arquivo do Cloudinary
-    await cloudinary.uploader.destroy(uploadResponse.public_id, { resource_type: "raw" });
+    // Limpa arquivos temporários
+    unlinkSync(pdfPath);
+    unlinkSync(convertedPath);
 
     return result;
   } catch (err) {
-    console.error(`[Cloudinary] Erro ao converter PDF:`, err);
+    console.error(`[Poppler] Erro ao converter PDF:`, err);
+    // Tenta limpar arquivos mesmo com erro
+    try {
+      unlinkSync(pdfPath);
+      unlinkSync(`${pngPath}-1.png`);
+    } catch {}
     return null;
   }
 }
