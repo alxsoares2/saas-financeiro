@@ -311,7 +311,7 @@ Analise:
   } as any);
   const textContent = response.choices[0]?.message?.content;
   if (!textContent) throw new Error("DeepSeek não retornou análise");
-  return typeof textContent === "string" ? textContent : textContent[0]?.text || "";
+  return typeof textContent === "string" ? textContent : "";
 }
 
 export async function extractMultiFromPDF(pdfBuffer: Buffer): Promise<ExtracaoMultipla | null> {
