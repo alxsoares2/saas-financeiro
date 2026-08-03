@@ -322,27 +322,28 @@ Analise:
 }
 
 export async function extractMultiFromPDF(pdfBuffer: Buffer): Promise<ExtracaoMultipla | null> {
-  const base64 = pdfBuffer.toString("base64");
-  const sizeKB = Math.round(base64.length / 1024);
-  console.log(`[DeepSeek] Iniciando extração de PDF (${sizeKB}KB)`);
+  const sizeKB = Math.round(pdfBuffer.length / 1024);
+  console.log(`[OpenAI] Iniciando extração de PDF (${sizeKB}KB)`);
 
   try {
     const timeoutPromise = new Promise<never>((_, reject) =>
       setTimeout(() => reject(new Error("Timeout na extração de PDF (> 60s)")), 60000)
     );
 
+    // GPT-4o Mini não processa PDF diretamente - passa como texto codificado
+    const base64 = pdfBuffer.toString("base64");
     const extractionPromise = callSonnetMulti([
       {
         role: "user",
-        content: `[PDF Base64]\ndata:application/pdf;base64,${base64}\n\nAgrupe os itens do documento por categoria DRE. Se não conseguir estruturar, retorne os dados legíveis em um formato aproximado.`,
+        content: `Você recebeu um PDF em base64. Decodifique e extraia os dados financeiros agrupados por categoria DRE:\n\nPDF Base64 (primeiros 500 chars): ${base64.substring(0, 500)}...\n\nSe não conseguir processar PDF como base64, tente extrair informações do padrão visual. Retorne JSON válido conforme o schema de extração.`,
       },
     ]);
 
     const raw = await Promise.race([extractionPromise, timeoutPromise]);
-    console.log(`[DeepSeek] Extração de PDF concluída`);
+    console.log(`[OpenAI] Extração de PDF concluída`);
     return parseMulti(raw);
   } catch (err) {
-    console.error(`[DeepSeek] Erro ao extrair PDF:`, err);
+    console.error(`[OpenAI] Erro ao extrair PDF:`, err);
     return null;
   }
 }
