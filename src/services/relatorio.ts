@@ -241,20 +241,20 @@ export async function gerarRelatorioContas(
   doc.fontSize(11).font("Helvetica-Bold");
 
   // Desenhar células do cabeçalho com fundo cinza
-  doc.rect(x1, headerY, colWidth1, rowHeight).fill("d3d3d3");
+  doc.rect(x1, headerY, colWidth1, rowHeight).fill("#d3d3d3");
   doc.rect(x1, headerY, colWidth1, rowHeight).stroke();
 
-  doc.rect(x2, headerY, colWidth2, rowHeight).fill("d3d3d3");
+  doc.rect(x2, headerY, colWidth2, rowHeight).fill("#d3d3d3");
   doc.rect(x2, headerY, colWidth2, rowHeight).stroke();
 
-  doc.rect(x3, headerY, colWidth3, rowHeight).fill("d3d3d3");
+  doc.rect(x3, headerY, colWidth3, rowHeight).fill("#d3d3d3");
   doc.rect(x3, headerY, colWidth3, rowHeight).stroke();
 
-  doc.rect(x4, headerY, colWidth4, rowHeight).fill("d3d3d3");
+  doc.rect(x4, headerY, colWidth4, rowHeight).fill("#d3d3d3");
   doc.rect(x4, headerY, colWidth4, rowHeight).stroke();
 
   // Escrever textos do cabeçalho
-  doc.fillColor("000000");
+  doc.fillColor("#000000");
   doc.text("DATA", x1 + 5, headerY + 4);
   doc.text("DESCRIÇÃO", x2 + 5, headerY + 4);
   doc.text("VALOR", x3 + 5, headerY + 4);
