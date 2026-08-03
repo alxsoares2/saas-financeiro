@@ -225,9 +225,9 @@ export async function gerarRelatorioContas(
   // Cabeçalho da tabela
   doc.fontSize(10).font("Helvetica-Bold");
   const colDataX = 50;
-  const colCatX = 110;
-  const colValorX = 270;
-  const colSitX = 370;
+  const colCatX = 130;
+  const colValorX = 300;
+  const colSitX = 420;
   const headerY = doc.y;
 
   doc.text("Data", colDataX, headerY);
@@ -236,7 +236,7 @@ export async function gerarRelatorioContas(
   doc.text("Situação", colSitX, headerY);
 
   doc.moveDown(0.5);
-  doc.moveTo(50, doc.y).lineTo(550, doc.y).stroke();
+  doc.moveTo(50, doc.y).lineTo(520, doc.y).stroke();
   doc.moveDown(0.3);
 
   // Linhas de dados
