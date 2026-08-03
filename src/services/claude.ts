@@ -6,8 +6,7 @@ let _client: OpenAI | null = null;
 function getClient(): OpenAI {
   if (!_client) {
     _client = new OpenAI({
-      apiKey: process.env.DEEPSEEK_API_KEY,
-      baseURL: "https://api.deepseek.com/v1",
+      apiKey: process.env.OPENAI_API_KEY,
     });
   }
   return _client;
@@ -79,7 +78,7 @@ function parseExtraction(raw: string): ExtractedDocument | null {
 
 async function callHaiku(messages: any[]): Promise<string> {
   const response = await getClient().chat.completions.create({
-    model: "deepseek-ai/DeepSeek-OCR-2",
+    model: "gpt-4o-mini",
     max_tokens: 1024,
     system: EXTRACTION_SYSTEM,
     messages,
@@ -236,7 +235,7 @@ function parseMulti(raw: string): ExtracaoMultipla | null {
 
 async function callHaikuMulti(messages: any[]): Promise<string> {
   const response = await getClient().chat.completions.create({
-    model: "deepseek-ai/DeepSeek-OCR-2",
+    model: "gpt-4o-mini",
     max_tokens: 2048,
     system: EXTRACTION_MULTI_SYSTEM,
     messages,
@@ -249,7 +248,7 @@ async function callHaikuMulti(messages: any[]): Promise<string> {
 // DeepSeek Vision para imagens
 async function callSonnetMulti(messages: any[]): Promise<string> {
   const response = await getClient().chat.completions.create({
-    model: "deepseek-ai/DeepSeek-OCR-2",
+    model: "gpt-4o-mini",
     max_tokens: 2048,
     system: EXTRACTION_MULTI_SYSTEM,
     messages,
