@@ -8,7 +8,8 @@ function getSupabase() {
   if (!supabase) {
     supabase = createClient(
       process.env.SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_KEY!
+      process.env.SUPABASE_SERVICE_KEY!,
+      { db: { schema: "financeiro" } }
     );
   }
   return supabase;
@@ -18,10 +19,12 @@ interface Lancamento {
   id: string;
   categoria: string;
   valor: number;
-  status: "pago" | "a_pagar" | "vencido";
+  status: "pendente" | "pago" | "pago_parcialmente";
   data_vencimento: string | null;
   data_pagamento: string | null;
+  data_emissao: string;
   descricao: string;
+  tipo: "receita" | "despesa";
 }
 
 interface RelatorioData {
@@ -49,9 +52,21 @@ export async function gerarRelatorioContas(
     // Relatório de um mês específico
     let { data: lancamentosData, error } = await sb
       .from("lancamentos")
-      .select("*")
-      .eq("mes", mes)
-      .eq("ano", ano)
+      .select(`
+        id,
+        tipo,
+        descricao,
+        valor,
+        data_emissao,
+        data_vencimento,
+        data_pagamento,
+        status,
+        valor_pago,
+        categoria_id,
+        categorias:categoria_id (nome)
+      `)
+      .gte("data_emissao", `${ano}-${String(mes).padStart(2, "0")}-01`)
+      .lt("data_emissao", mes === 12 ? `${ano + 1}-01-01` : `${ano}-${String(mes + 1).padStart(2, "0")}-01`)
       .order("data_vencimento", { ascending: true });
 
     if (error) {
@@ -64,9 +79,20 @@ export async function gerarRelatorioContas(
     // Relatório GERAL (todos os meses)
     let { data: lancamentosData, error } = await sb
       .from("lancamentos")
-      .select("*")
-      .order("ano", { ascending: false })
-      .order("mes", { ascending: false })
+      .select(`
+        id,
+        tipo,
+        descricao,
+        valor,
+        data_emissao,
+        data_vencimento,
+        data_pagamento,
+        status,
+        valor_pago,
+        categoria_id,
+        categorias:categoria_id (nome)
+      `)
+      .order("data_emissao", { ascending: false })
       .order("data_vencimento", { ascending: true });
 
     if (error) {
@@ -84,16 +110,30 @@ export async function gerarRelatorioContas(
   let totalVencido = 0;
 
   (lancamentos || []).forEach((l: any) => {
-    if (!porCategoria[l.categoria]) {
-      porCategoria[l.categoria] = [];
+    const categoria = l.categorias?.nome || "Sem categoria";
+    if (!porCategoria[categoria]) {
+      porCategoria[categoria] = [];
     }
-    porCategoria[l.categoria].push(l);
+    porCategoria[categoria].push(l);
 
-    // Calcula status e totais
-    const status = determinarStatus(l.data_pagamento, l.data_vencimento);
-    if (status === "pago") totalPago += l.valor;
-    else if (status === "vencido") totalVencido += l.valor;
-    else totalAPagar += l.valor;
+    // Calcula totais baseado no status e data
+    if (l.status === "pago" || l.status === "pago_parcialmente") {
+      totalPago += l.valor_pago || 0;
+      const pendente = l.valor - (l.valor_pago || 0);
+      if (pendente > 0) {
+        if (l.data_vencimento && new Date(l.data_vencimento) < new Date()) {
+          totalVencido += pendente;
+        } else {
+          totalAPagar += pendente;
+        }
+      }
+    } else if (l.status === "pendente") {
+      if (l.data_vencimento && new Date(l.data_vencimento) < new Date()) {
+        totalVencido += l.valor;
+      } else {
+        totalAPagar += l.valor;
+      }
+    }
   });
 
   // Gera PDF
@@ -158,17 +198,26 @@ export async function gerarRelatorioContas(
       // Linhas de dados
       doc.fontSize(8).font("Helvetica");
       items.forEach((item: any) => {
-        const status = determinarStatus(
-          item.data_pagamento,
-          item.data_vencimento
-        );
-        const statusEmoji =
-          status === "pago" ? "✅" : status === "vencido" ? "⚠️" : "⏳";
+        let statusEmoji = "❓";
+        let statusLabel = "Desconhecido";
+
+        if (item.status === "pago" || item.status === "pago_parcialmente") {
+          statusEmoji = item.status === "pago" ? "✅" : "⚠️ Parcial";
+          statusLabel = item.status === "pago" ? "Pago" : "Pago Parcialmente";
+        } else if (item.status === "pendente") {
+          if (item.data_vencimento && new Date(item.data_vencimento) < new Date()) {
+            statusEmoji = "🔴";
+            statusLabel = "Vencido";
+          } else {
+            statusEmoji = "⏳";
+            statusLabel = "Pendente";
+          }
+        }
 
         x = 40;
         doc.text(statusEmoji, x, doc.y, { width: colunas.status });
         x += colunas.status;
-        doc.text(item.descricao || item.categoria, x, doc.y - 12, {
+        doc.text(item.descricao || "—", x, doc.y - 12, {
           width: colunas.descricao,
         });
         x += colunas.descricao;
@@ -200,18 +249,6 @@ export async function gerarRelatorioContas(
   });
 }
 
-function determinarStatus(
-  dataPagamento: string | null,
-  dataVencimento: string | null
-): "pago" | "a_pagar" | "vencido" {
-  if (dataPagamento) return "pago";
-  if (dataVencimento) {
-    const venc = new Date(dataVencimento);
-    if (venc < new Date()) return "vencido";
-    return "a_pagar";
-  }
-  return "a_pagar";
-}
 
 function getMesNome(mes: number): string {
   const nomes = [
