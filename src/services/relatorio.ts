@@ -145,21 +145,14 @@ export async function gerarRelatorioContas(
     mesLabel = "GERAL (Todos os meses)";
   }
 
-  // Agrupa por categoria e calcula totais
-  console.log("[relatorio] Agrupando por categoria...");
-  const porCategoria: Record<string, Lancamento[]> = {};
+  // Calcula totais e ordena por data (mais antiga para mais nova)
+  console.log("[relatorio] Calculando totais e ordenando...");
   let totalPago = 0;
   let totalAPagar = 0;
   let totalVencido = 0;
 
   try {
     (lancamentos || []).forEach((l: any) => {
-      const categoria = l.categoria || "Sem categoria";
-      if (!porCategoria[categoria]) {
-        porCategoria[categoria] = [];
-      }
-      porCategoria[categoria].push(l);
-
       // Calcula totais baseado no status e data
       if (l.status === "pago" || l.status === "pago_parcialmente") {
         totalPago += Number(l.valor_pago) || 0;
@@ -179,9 +172,17 @@ export async function gerarRelatorioContas(
         }
       }
     });
-    console.log(`[relatorio] Agrupamento concluído: ${Object.keys(porCategoria).length} categorias`);
+
+    // Ordena por data (mais antiga para mais nova)
+    lancamentos.sort((a: any, b: any) => {
+      const dataA = new Date(a.data_emissao || a.data_vencimento || "");
+      const dataB = new Date(b.data_emissao || b.data_vencimento || "");
+      return dataA.getTime() - dataB.getTime();
+    });
+
+    console.log(`[relatorio] Totais calculados: Pago=${totalPago} APagar=${totalAPagar} Vencido=${totalVencido}`);
   } catch (err) {
-    console.error("[relatorio] Erro ao agrupar:", err);
+    console.error("[relatorio] Erro ao calcular totais:", err);
     throw err;
   }
 
@@ -206,51 +207,41 @@ export async function gerarRelatorioContas(
   // Resumo de totais
   doc.fontSize(11).font("Helvetica-Bold").text("RESUMO");
   doc.fontSize(10).font("Helvetica");
-  doc.text(`[PAGO] R$ ${totalPago.toFixed(2)}`);
-  doc.text(`[A PAGAR] R$ ${totalAPagar.toFixed(2)}`);
-  doc.text(`[VENCIDO] R$ ${totalVencido.toFixed(2)}`);
-  doc.text(`────────────────────────`);
+  doc.text(`Pago: R$ ${totalPago.toFixed(2)}`);
+  doc.text(`A Pagar: R$ ${totalAPagar.toFixed(2)}`);
+  doc.text(`Vencido: R$ ${totalVencido.toFixed(2)}`);
+  doc.text(`─────────────────────────────────`);
   doc.text(
     `TOTAL: R$ ${(totalPago + totalAPagar + totalVencido).toFixed(2)}`,
     { underline: true }
   );
 
-  doc.moveDown(1.5);
+  doc.moveDown(1);
 
-  // Detalhes por categoria
-  doc.fontSize(11).font("Helvetica-Bold").text("CONTAS POR CATEGORIA");
-  doc.moveDown(0.5);
+  // Lista de lançamentos (formato simples)
+  doc.fontSize(10).font("Helvetica-Bold").text("LANÇAMENTOS (data | categoria | valor | situação)");
+  doc.fontSize(9).font("Helvetica");
+  doc.moveDown(0.3);
 
-  Object.keys(porCategoria)
-    .sort()
-    .forEach((categoria) => {
-      doc.fontSize(10).font("Helvetica-Bold").text(`\n${categoria}`);
-      doc.fontSize(8).font("Helvetica");
+  lancamentos.forEach((item: any) => {
+    let situacao = "?";
 
-      const items = porCategoria[categoria];
-      items.forEach((item: any) => {
-        let statusLabel = "?";
+    if (item.status === "pago" || item.status === "pago_parcialmente") {
+      situacao = item.status === "pago" ? "Pago" : "Pago Parcial";
+    } else if (item.status === "pendente") {
+      if (item.data_vencimento && new Date(item.data_vencimento) < new Date()) {
+        situacao = "Vencido";
+      } else {
+        situacao = "A Pagar";
+      }
+    }
 
-        if (item.status === "pago" || item.status === "pago_parcialmente") {
-          statusLabel = item.status === "pago" ? "[P]" : "[PP]";
-        } else if (item.status === "pendente") {
-          if (item.data_vencimento && new Date(item.data_vencimento) < new Date()) {
-            statusLabel = "[V]";
-          } else {
-            statusLabel = "[A]";
-          }
-        }
+    const data = item.data_emissao ? formatarData(item.data_emissao) : "—";
+    const categoria = (item.categoria || "—").substring(0, 30);
+    const valor = `R$ ${Number(item.valor).toFixed(2)}`;
 
-        const descricao = (item.descricao || "—").substring(0, 40);
-        const data = item.data_vencimento ? formatarData(item.data_vencimento) : "—";
-        const valor = `R$ ${Number(item.valor).toFixed(2)}`;
-
-        doc.text(`${statusLabel} ${descricao}`, { continued: true });
-        doc.text(` ${valor} (${data})`);
-      });
-
-      doc.moveDown(0.3);
-    });
+    doc.text(`${data} | ${categoria} | ${valor} | ${situacao}`);
+  });
 
   try {
     console.log("[relatorio] Finalizando PDF...");
