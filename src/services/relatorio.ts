@@ -218,18 +218,18 @@ export async function gerarRelatorioContas(
 
   doc.moveDown(1);
 
-  // Tabela de lançamentos com formato monospace
-  doc.fontSize(11).font("Helvetica-Bold").text("LANÇAMENTOS");
+  // Tabela de lançamentos
+  doc.fontSize(12).font("Helvetica-Bold").text("LANÇAMENTOS");
+  doc.moveDown(0.4);
+
+  // Cabeçalho
+  doc.fontSize(10).font("Helvetica-Bold").text("Data         Categoria                        Valor      Situação");
+  doc.moveDown(0.2);
+  doc.moveTo(50, doc.y).lineTo(520, doc.y).stroke();
   doc.moveDown(0.3);
 
-  // Cabeçalho e dados em formato monospace
-  doc.fontSize(9).font("Courier");
-  doc.text("Data        Categoria                Valor         Situação");
-  doc.fontSize(8);
-  doc.text("─────────────────────────────────────────────────────────────");
-  doc.moveDown(0.2);
-
   // Linhas de dados
+  doc.fontSize(10).font("Helvetica");
   let contagem = 0;
   lancamentos.forEach((item: any, idx: number) => {
     contagem++;
@@ -253,10 +253,10 @@ export async function gerarRelatorioContas(
       console.log(`[relatorio] Item ${idx}: data_emissao="${dataRaw}" -> formatada="${data}"`);
     }
 
-    const categoria = (item.categoria || "—").substring(0, 20).padEnd(20);
-    const valor = `R$ ${Number(item.valor).toFixed(2)}`.padStart(13);
+    const categoria = (item.categoria || "—").substring(0, 28).padEnd(28);
+    const valor = `R$ ${Number(item.valor).toFixed(2)}`.padStart(11);
 
-    const linha = `${data}  ${categoria}  ${valor}  ${situacao}`;
+    const linha = `${data}   ${categoria}  ${valor}  ${situacao}`;
     doc.text(linha);
   });
 
