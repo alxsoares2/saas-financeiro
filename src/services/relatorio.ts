@@ -222,16 +222,16 @@ export async function gerarRelatorioContas(
   doc.fontSize(12).font("Helvetica-Bold").text("LANÇAMENTOS");
   doc.moveDown(0.5);
 
-  // Dimensões das colunas
+  // Dimensões das colunas (ajustadas para ficarem alinhadas no PDF)
   const x1 = 50;     // Data
-  const x2 = 130;    // Categoria
-  const x3 = 350;    // Valor
-  const x4 = 460;    // Situação
+  const x2 = 140;    // Categoria
+  const x3 = 380;    // Valor
+  const x4 = 480;    // Situação
 
-  const colWidth1 = x2 - x1;      // 80
-  const colWidth2 = x3 - x2;      // 220
-  const colWidth3 = x4 - x3;      // 110
-  const colWidth4 = 540 - x4;     // 80
+  const colWidth1 = 90;      // Data
+  const colWidth2 = 240;     // Categoria
+  const colWidth3 = 100;     // Valor
+  const colWidth4 = 70;      // Situação
 
   const rowHeight = 18;
 
