@@ -1,5 +1,4 @@
 import OpenAI from "openai";
-import * as pdfjsLib from "pdfjs-dist";
 import { ExtractedDocument, ExtracaoMultipla } from "../types.js";
 
 let _client: OpenAI | null = null;
@@ -324,37 +323,6 @@ Analise:
 
 export async function extractMultiFromPDF(pdfBuffer: Buffer): Promise<ExtracaoMultipla | null> {
   const sizeKB = Math.round(pdfBuffer.length / 1024);
-  console.log(`[OpenAI] Iniciando extração de PDF (${sizeKB}KB)`);
-
-  try {
-    // Extrai texto do PDF usando pdf.js
-    const pdf = await pdfjsLib.getDocument({ data: pdfBuffer }).promise;
-    let pdfText = "";
-
-    for (let i = 1; i <= Math.min(pdf.numPages, 5); i++) {
-      const page = await pdf.getPage(i);
-      const textContent = await page.getTextContent();
-      pdfText += textContent.items.map((item: any) => item.str).join("") + "\n";
-    }
-
-    console.log(`[OpenAI] PDF convertido para texto (${pdfText.length} caracteres, ${pdf.numPages} páginas)`);
-
-    const timeoutPromise = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error("Timeout na extração de PDF (> 60s)")), 60000)
-    );
-
-    const extractionPromise = callSonnetMulti([
-      {
-        role: "user",
-        content: `Extraia os dados financeiros do seguinte texto extraído de um PDF e agrupe por categoria DRE:\n\n${pdfText}`,
-      },
-    ]);
-
-    const raw = await Promise.race([extractionPromise, timeoutPromise]);
-    console.log(`[OpenAI] Extração de PDF concluída`);
-    return parseMulti(raw);
-  } catch (err) {
-    console.error(`[OpenAI] Erro ao extrair PDF:`, err);
-    return null;
-  }
+  console.log(`[OpenAI] PDF não suportado (${sizeKB}KB) — use screenshot ou imagem do documento`);
+  return null;
 }
