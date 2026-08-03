@@ -1,6 +1,8 @@
 import OpenAI from "openai";
 import { ExtractedDocument, ExtracaoMultipla } from "../types.js";
 
+const pdfParse = require("pdf-parse/lib/pdf-parse.js");
+
 let _client: OpenAI | null = null;
 
 function getClient(): OpenAI {
@@ -326,16 +328,19 @@ export async function extractMultiFromPDF(pdfBuffer: Buffer): Promise<ExtracaoMu
   console.log(`[OpenAI] Iniciando extração de PDF (${sizeKB}KB)`);
 
   try {
+    // Extrai texto do PDF usando pdf-parse
+    const pdfData = await pdfParse(pdfBuffer);
+    const pdfText = pdfData.text;
+    console.log(`[OpenAI] PDF convertido para texto (${pdfText.length} caracteres)`);
+
     const timeoutPromise = new Promise<never>((_, reject) =>
       setTimeout(() => reject(new Error("Timeout na extração de PDF (> 60s)")), 60000)
     );
 
-    // GPT-4o Mini não processa PDF diretamente - passa como texto codificado
-    const base64 = pdfBuffer.toString("base64");
     const extractionPromise = callSonnetMulti([
       {
         role: "user",
-        content: `Você recebeu um PDF em base64. Decodifique e extraia os dados financeiros agrupados por categoria DRE:\n\nPDF Base64 (primeiros 500 chars): ${base64.substring(0, 500)}...\n\nSe não conseguir processar PDF como base64, tente extrair informações do padrão visual. Retorne JSON válido conforme o schema de extração.`,
+        content: `Extraia os dados financeiros do seguinte texto extraído de um PDF e agrupe por categoria DRE:\n\n${pdfText}`,
       },
     ]);
 

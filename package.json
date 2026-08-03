@@ -15,6 +15,7 @@
     "dotenv": "^16.4.0",
     "express": "^4.19.0",
     "openai": "^4.52.0",
+    "pdf-parse": "^2.4.5",
     "puppeteer": "^25.4.0",
     "xml2js": "^0.6.2"
   },
