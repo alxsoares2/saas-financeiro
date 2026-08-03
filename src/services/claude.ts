@@ -31,20 +31,25 @@ Regras:
 - valor_total sempre em reais, número sem formatação (ex: 1500.90)
 - tipo_lancamento: "despesa" para compras/boletos/NF de fornecedor; "receita" para fechamento de caixa/comprovante de venda
 - confianca: "alta" se dados claramente visíveis; "media" se há ambiguidade; "baixa" se ilegível ou incompleto
-- categoria_sugerida: OBRIGATÓRIA — NUNCA null. Use EXATAMENTE uma das categorias abaixo, sempre a mais próxima. Queijo/leite/manteiga → "Laticínios e Frios"; gasolina → "Despesas com Veículos". Na dúvida, escolha a mais próxima — nunca deixe em branco.
+- categoria_sugerida: OBRIGATÓRIA — NUNCA null. Use EXATAMENTE uma das categorias abaixo, sempre a mais próxima. Queijo/leite/manteiga → "Latícinios"; gasolina → "Despesas com veículos (comb., manut., IPVA, outros)". Na dúvida, escolha a mais próxima — nunca deixe em branco.
 
-Categorias de DESPESA disponíveis (use o nome exato):
-  Custos variáveis: "Bovinos", "Suínos", "Aves", "Frutos do Mar", "FLV (Frutas, Legumes e Verduras)", "Laticínios e Frios", "Congelados", "Grãos / Cereais / Farinhas", "Óleos / Azeites / Gorduras", "Café e Infusões", "Condimentos / Temperos / Molhos", "Outros Ingredientes"
-  Bebidas revendidas: "Cervejas", "Destilados", "Vinhos", "Bebidas Não Alcoólicas", "Água Mineral"
-  Apoio: "Material de Limpeza e Higiene", "Embalagens e Descartáveis", "Gelo"
-  Tarifas: "Tarifa Cartão de Crédito", "Tarifa Cartão de Débito", "Tarifa iFood", "Tarifa Pix"
-  Impostos: "PIS", "COFINS", "ICMS", "Simples Nacional (DAS)", "ISS"
+Categorias de DESPESA disponíveis (use o nome EXATO):
+  CMV: "Bovinos", "Suínos", "Ovinos", "Aves", "Frutos do Mar", "Frutas, legumes e verduras FLV", "Doces industrializados", "Latícinios", "Congelados", "Grãos/Cereais/Farinha", "Óleos/Azeites/Gordura", "Café", "Conservas", "Condimentos/Temperos/Molhos", "Embalagens e Descartáveis", "Etiquetas"
+  Bebidas: "Cervejas", "Destilados", "Vinhos", "Bebidas Não alcoólicas"
+  Apoio: "Material de limpeza e higiene"
   Mão de obra eventual: "Mão de Obra Eventual / Freelancer"
-  Ocupação: "Aluguel do Estabelecimento", "IPTU", "TCR / Taxa de Coleta", "Condomínio"
-  Utilidades: "Conta de Luz", "Conta de Água e Esgoto", "Conta de Gás", "Telefone / Internet"
-  Administrativas: "Sistema PDV / ERP / Gestão", "Contabilidade / Honorários", "Manutenção de Equipamentos", "Seguros", "Despesas com Veículos", "Alvará / Licenças / Taxas", "Outras Despesas Administrativas"
-  Marketing: "Marketing Digital / Redes Sociais", "Patrocínios / Parcerias", "Material Gráfico / Impressos"
-  Pessoal fixo: "Salários CLT", "Pró-Labore", "Encargos Trabalhistas (FGTS/INSS)", "Vale Transporte", "Vale Refeição / Alimentação", "Plano de Saúde"
+  Tarifas: "Cartão de Crédito", "Cartão de Débito", "Ifood", "Pix"
+  Impostos: "PIS", "COFINS", "FUNCEP", "FEEF", "Simples Nacional Consultoria", "ICMS bebida quente", "ICMS fronteira", "ICMS normal"
+  Ocupação: "Aluguel do estabelecimento", "IPTU", "TCR", "Outros impostos e taxas"
+  Utilidades: "Conta de Luz", "Conta de Água", "Telefone", "Conta de Gás"
+  Administrativas: "Material de Escritório / informática", "Sistema Gerencial", "Internet", "Seguro", "Aluguel de maquinetas", "Aluguel de Equipamentos", "Despesas de Locomoção", "Assinaturas digitais/Apps/Softwares", "Sindicato", "Despesas com veículos (comb., manut., IPVA, outros)", "Outras despesas administrativas"
+  Marketing: "Anúncios", "Criação de conteúdo/Influencers", "Divulgação"
+  Manutenção: "Predial", "Reparos Máquinas e Equipamentos", "Preventiva"
+  Aquisição: "Equipamentos", "Utensílios cozinha e salão"
+  Serviços terceirizados: "Contabilidade", "Segurança", "Segurança eletrônica", "Transportadora", "Serviços gráficos", "Dedetização", "Advocacia", "Músicos/bandas", "Agência de Marketing", "Jardinagem/Paisagismo/Decoração", "Consultoria Gastronomia", "Assessoria Nutricional"
+  Pessoal: "Salários", "Vale-Transporte", "Férias", "INSS", "FGTS", "Despesas com admissão e demissão", "Assistência médica", "Medicina do Trabalho", "Seguro de Vida", "13º salário", "Rescisões", "Extras", "Gratificação", "Contribuição sindical / assistencial", "Retenção IRPF", "Salário Família", "Bolsa Auxilio Estágio", "Cursos profissionalizantes", "Uniformes", "Ajuda de custo (Moradia)"
+  Retirada de sócios: "Retirada de lucro de Sócios"
+  Financeiras: "Despesas Bancárias", "IOF", "Empréstimos/Giro", "Juros"
 
 Categorias de RECEITA disponíveis:
   "Vendas - Dinheiro", "Vendas - Pix", "Vendas - Cartão de Débito", "Vendas - Cartão de Crédito", "Vendas - iFood", "Vendas - Vale Refeição", "Serviços - Eventos", "Outras Receitas"
@@ -177,32 +182,35 @@ ATENÇÃO — iFood Pago vs Tarifa iFood:
 - Se o comprovante mostra PIX enviado de uma conta iFood Pago para uma PESSOA ou EMPRESA TERCEIRA (campo Destino/Favorecido com nome diferente do iFood), classifique conforme o destinatário e o contexto — pode ser salário, fornecedor, aluguel, etc. Não use "Tarifa iFood" nesses casos.
 
 ⛔ REGRA CRÍTICA — categoria_sugerida é OBRIGATÓRIA em TODO item. NUNCA devolva null.
-Todo produto de restaurante tem uma categoria. Sempre escolha a MAIS PRÓXIMA da lista abaixo.
-Se estiver em dúvida entre duas, escolha uma — nunca deixe em branco.
-Se realmente não encaixar em nenhuma específica, use "Outros Ingredientes" (comida/insumo),
-"Bebidas Não Alcoólicas" (bebida) ou "Outras Despesas Administrativas" (não-alimentar).
-Exemplos de itens que SEMPRE têm categoria (não erre estes):
-  - queijo, muçarela, leite, manteiga, requeijão, iogurte, presunto → "Laticínios e Frios"
+Todo produto tem categoria. Sempre escolha a MAIS PRÓXIMA da lista abaixo (use o nome EXATO).
+Na dúvida entre duas, escolha uma — nunca deixe em branco.
+Exemplos (não erre estes):
+  - queijo, muçarela, leite, manteiga, requeijão, iogurte, presunto → "Latícinios"
   - carne, boi, alcatra, patinho, acém → "Bovinos"
   - frango, coxa, peito, asa → "Aves"
-  - tomate, cebola, alface, batata → "FLV (Frutas, Legumes e Verduras)"
-  - gasolina, combustível, diesel → "Despesas com Veículos"
-  - refrigerante, coca, guaraná, suco → "Bebidas Não Alcoólicas"
+  - tomate, cebola, alface, batata, fruta → "Frutas, legumes e verduras FLV"
+  - embalagem, descartável, marmita, sacola, pote → "Embalagens e Descartáveis" (vai no CMV)
+  - etiqueta → "Etiquetas" (vai no CMV)
+  - gasolina, combustível, diesel, IPVA, mecânico → "Despesas com veículos (comb., manut., IPVA, outros)"
+  - refrigerante, coca, guaraná, suco, água → "Bebidas Não alcoólicas"
 
-Categorias disponíveis (use o nome exato):
-  CMV: "Bovinos", "Suínos", "Aves", "Frutos do Mar", "FLV (Frutas, Legumes e Verduras)",
-       "Laticínios e Frios" (INCLUI: leite, queijo, manteiga, iogurte, requeijão, cream cheese, frios, presunto, mortadela),
-       "Congelados", "Grãos / Cereais / Farinhas", "Óleos / Azeites / Gorduras", "Café e Infusões", "Condimentos / Temperos / Molhos", "Outros Ingredientes"
-  Bebidas: "Cervejas", "Destilados", "Vinhos", "Bebidas Não Alcoólicas", "Água Mineral"
-  Apoio: "Material de Limpeza e Higiene", "Embalagens e Descartáveis", "Gelo"
-  Tarifas: "Tarifa Cartão de Crédito", "Tarifa Cartão de Débito", "Tarifa iFood", "Tarifa Pix"
-  Impostos: "PIS", "COFINS", "ICMS", "Simples Nacional (DAS)", "ISS"
+Categorias disponíveis (use o nome EXATO):
+  CMV: "Bovinos", "Suínos", "Ovinos", "Aves", "Frutos do Mar", "Frutas, legumes e verduras FLV", "Doces industrializados", "Latícinios", "Congelados", "Grãos/Cereais/Farinha", "Óleos/Azeites/Gordura", "Café", "Conservas", "Condimentos/Temperos/Molhos", "Embalagens e Descartáveis", "Etiquetas"
+  Bebidas (venda direta): "Cervejas", "Destilados", "Vinhos", "Bebidas Não alcoólicas"
+  Materiais de apoio: "Material de limpeza e higiene"
   Mão de obra eventual: "Mão de Obra Eventual / Freelancer"
-  Ocupação: "Aluguel do Estabelecimento", "IPTU", "TCR / Taxa de Coleta", "Condomínio"
-  Utilidades: "Conta de Luz", "Conta de Água e Esgoto", "Conta de Gás", "Telefone / Internet"
-  Administrativas: "Sistema PDV / ERP / Gestão", "Contabilidade / Honorários", "Manutenção de Equipamentos", "Seguros", "Despesas com Veículos", "Alvará / Licenças / Taxas", "Outras Despesas Administrativas"
-  Marketing: "Marketing Digital / Redes Sociais", "Patrocínios / Parcerias", "Material Gráfico / Impressos"
-  Pessoal fixo: "Salários CLT", "Pró-Labore", "Encargos Trabalhistas (FGTS/INSS)", "Vale Transporte", "Vale Refeição / Alimentação", "Plano de Saúde"
+  Tarifas: "Cartão de Crédito", "Cartão de Débito", "Ifood", "Pix"
+  Impostos: "PIS", "COFINS", "FUNCEP", "FEEF", "Simples Nacional Consultoria", "ICMS bebida quente", "ICMS fronteira", "ICMS normal"
+  Ocupação: "Aluguel do estabelecimento", "IPTU", "TCR", "Outros impostos e taxas"
+  Utilidades: "Conta de Luz", "Conta de Água", "Telefone", "Conta de Gás"
+  Administrativas: "Material de Escritório / informática", "Sistema Gerencial", "Internet", "Seguro", "Aluguel de maquinetas", "Aluguel de Equipamentos", "Despesas de Locomoção", "Assinaturas digitais/Apps/Softwares", "Sindicato", "Despesas com veículos (comb., manut., IPVA, outros)", "Outras despesas administrativas"
+  Marketing: "Anúncios", "Criação de conteúdo/Influencers", "Divulgação"
+  Manutenção: "Predial", "Reparos Máquinas e Equipamentos", "Preventiva"
+  Aquisição: "Equipamentos", "Utensílios cozinha e salão"
+  Serviços terceirizados: "Contabilidade", "Segurança", "Segurança eletrônica", "Transportadora", "Serviços gráficos", "Dedetização", "Advocacia", "Músicos/bandas", "Agência de Marketing", "Jardinagem/Paisagismo/Decoração", "Consultoria Gastronomia", "Assessoria Nutricional"
+  Pessoal: "Salários", "Vale-Transporte", "Férias", "INSS", "FGTS", "Despesas com admissão e demissão", "Assistência médica", "Medicina do Trabalho", "Seguro de Vida", "13º salário", "Rescisões", "Extras", "Gratificação", "Contribuição sindical / assistencial", "Retenção IRPF", "Salário Família", "Bolsa Auxilio Estágio", "Cursos profissionalizantes", "Uniformes", "Ajuda de custo (Moradia)"
+  Retirada de sócios: "Retirada de lucro de Sócios"
+  Financeiras: "Despesas Bancárias", "IOF", "Empréstimos/Giro", "Juros"
   Receitas: "Vendas - Dinheiro", "Vendas - Pix", "Vendas - Cartão de Débito", "Vendas - Cartão de Crédito", "Vendas - iFood", "Vendas - Vale Refeição", "Serviços - Eventos", "Outras Receitas"`;
 
 function parseMulti(raw: string): ExtracaoMultipla | null {

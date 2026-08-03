@@ -205,7 +205,7 @@ async function registrarMultipla(
     // Se o Claude não classificou, usa um fallback por tipo e MARCA pra revisão.
     const catNome =
       item.categoria_sugerida ||
-      (item.tipo_lancamento === "receita" ? "Outras Receitas" : "Outros Ingredientes");
+      (item.tipo_lancamento === "receita" ? "Outras Receitas" : "Outras despesas administrativas");
     if (!item.categoria_sugerida) semCategoria = true;
 
     try {
@@ -1637,7 +1637,7 @@ router.post("/zapi", async (req: Request, res: Response) => {
     let semCategoriaUnica = false;
     const catNomeUnica =
       extracted.categoria_sugerida ||
-      (extracted.tipo_lancamento === "receita" ? "Outras Receitas" : "Outros Ingredientes");
+      (extracted.tipo_lancamento === "receita" ? "Outras Receitas" : "Outras despesas administrativas");
     if (!extracted.categoria_sugerida) semCategoriaUnica = true;
     try {
       const grupoDre = inferirGrupoDre(catNomeUnica, extracted.tipo_lancamento);
