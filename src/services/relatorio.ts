@@ -235,23 +235,43 @@ export async function gerarRelatorioContas(
 
   const rowHeight = 18;
 
-  // Cabeçalho
-  doc.fontSize(11).font("Helvetica-Bold").fillColor("000000");
+  // Cabeçalho da tabela
+  console.log("[relatorio] Renderizando cabeçalho da tabela...");
   const headerY = doc.y;
+  doc.fontSize(11).font("Helvetica-Bold").fillColor("000000");
 
   // Desenhar células do cabeçalho
-  doc.rect(x1, headerY, colWidth1, rowHeight).fillAndStroke("d3d3d3", "000000");
-  doc.rect(x2, headerY, colWidth2, rowHeight).fillAndStroke("d3d3d3", "000000");
-  doc.rect(x3, headerY, colWidth3, rowHeight).fillAndStroke("d3d3d3", "000000");
-  doc.rect(x4, headerY, colWidth4, rowHeight).fillAndStroke("d3d3d3", "000000");
+  doc.rect(x1, headerY, colWidth1, rowHeight).fillAndStroke("cccccc", "000000");
+  doc.rect(x2, headerY, colWidth2, rowHeight).fillAndStroke("cccccc", "000000");
+  doc.rect(x3, headerY, colWidth3, rowHeight).fillAndStroke("cccccc", "000000");
+  doc.rect(x4, headerY, colWidth4, rowHeight).fillAndStroke("cccccc", "000000");
 
-  // Escrever cabeçalhos em MAIÚSCULO
-  doc.text("DATA", x1 + 5, headerY + 3, { width: colWidth1 - 10 });
-  doc.text("DESCRIÇÃO", x2 + 5, headerY + 3, { width: colWidth2 - 10 });
-  doc.text("VALOR", x3 + 5, headerY + 3, { width: colWidth3 - 10 });
-  doc.text("SITUAÇÃO", x4 + 5, headerY + 3, { width: colWidth4 - 10 });
+  // Escrever texto do cabeçalho usando xHeight para centralizar
+  const textY = headerY + (rowHeight - 12) / 2; // Centralizar verticalmente
 
-  doc.moveDown(1.5);
+  // DATA
+  doc.save();
+  doc.text("DATA", x1 + 5, textY, { width: colWidth1 - 10, ellipsis: true });
+  doc.restore();
+
+  // DESCRIÇÃO
+  doc.save();
+  doc.text("DESCRIÇÃO", x2 + 5, textY, { width: colWidth2 - 10, ellipsis: true });
+  doc.restore();
+
+  // VALOR
+  doc.save();
+  doc.text("VALOR", x3 + 5, textY, { width: colWidth3 - 10, ellipsis: true, align: "right" });
+  doc.restore();
+
+  // SITUAÇÃO
+  doc.save();
+  doc.text("SITUAÇÃO", x4 + 5, textY, { width: colWidth4 - 10, ellipsis: true });
+  doc.restore();
+
+  console.log("[relatorio] Cabeçalho renderizado com sucesso");
+  doc.y = headerY + rowHeight;
+  doc.moveDown(0.3);
 
   // Linhas de dados
   doc.fontSize(9).font("Helvetica");
