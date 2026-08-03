@@ -218,29 +218,18 @@ export async function gerarRelatorioContas(
 
   doc.moveDown(1);
 
-  // Tabela de lançamentos com colunas alinhadas
-  doc.fontSize(11).font("Helvetica-Bold").text("LANÇAMENTOS", 50);
+  // Tabela de lançamentos com formato monospace
+  doc.fontSize(11).font("Helvetica-Bold").text("LANÇAMENTOS");
   doc.moveDown(0.3);
 
-  // Cabeçalho da tabela
-  doc.fontSize(10).font("Helvetica-Bold");
-  const colDataX = 50;
-  const colCatX = 130;
-  const colValorX = 300;
-  const colSitX = 420;
-  const headerY = doc.y;
-
-  doc.text("Data", colDataX, headerY);
-  doc.text("Categoria", colCatX, headerY);
-  doc.text("Valor", colValorX, headerY);
-  doc.text("Situação", colSitX, headerY);
-
-  doc.moveDown(0.5);
-  doc.moveTo(50, doc.y).lineTo(520, doc.y).stroke();
-  doc.moveDown(0.3);
+  // Cabeçalho e dados em formato monospace
+  doc.fontSize(9).font("Courier");
+  doc.text("Data        Categoria                Valor         Situação");
+  doc.fontSize(8);
+  doc.text("─────────────────────────────────────────────────────────────");
+  doc.moveDown(0.2);
 
   // Linhas de dados
-  doc.fontSize(10).font("Helvetica");
   lancamentos.forEach((item: any) => {
     let situacao = "?";
 
@@ -255,16 +244,11 @@ export async function gerarRelatorioContas(
     }
 
     const data = item.data_emissao ? formatarData(item.data_emissao) : "—";
-    const categoria = (item.categoria || "—").substring(0, 25);
-    const valor = `R$ ${Number(item.valor).toFixed(2)}`;
+    const categoria = (item.categoria || "—").substring(0, 20).padEnd(20);
+    const valor = `R$ ${Number(item.valor).toFixed(2)}`.padStart(13);
 
-    const y = doc.y;
-    doc.text(data, colDataX, y, { width: 50 });
-    doc.text(categoria, colCatX, y, { width: 150 });
-    doc.text(valor, colValorX, y, { width: 80, align: "right" });
-    doc.text(situacao, colSitX, y, { width: 80 });
-
-    doc.moveDown(0.35);
+    const linha = `${data}  ${categoria}  ${valor}  ${situacao}`;
+    doc.text(linha);
   });
 
   try {
