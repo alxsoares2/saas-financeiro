@@ -50,6 +50,11 @@ export async function gerarRelatorioContas(
 
   if (mes && ano) {
     // Relatório de um mês específico
+    const dataInicio = `${ano}-${String(mes).padStart(2, "0")}-01`;
+    const dataFim = mes === 12 ? `${ano + 1}-01-01` : `${ano}-${String(mes + 1).padStart(2, "0")}-01`;
+
+    console.log(`[relatorio] Buscando lançamentos de ${dataInicio} a ${dataFim}`);
+
     let { data: lancamentosData, error } = await sb
       .from("lancamentos")
       .select(`
@@ -63,20 +68,23 @@ export async function gerarRelatorioContas(
         status,
         valor_pago,
         categoria_id,
-        categorias:categoria_id (nome)
+        categorias (nome)
       `)
-      .gte("data_emissao", `${ano}-${String(mes).padStart(2, "0")}-01`)
-      .lt("data_emissao", mes === 12 ? `${ano + 1}-01-01` : `${ano}-${String(mes + 1).padStart(2, "0")}-01`)
+      .gte("data_emissao", dataInicio)
+      .lt("data_emissao", dataFim)
       .order("data_vencimento", { ascending: true });
 
     if (error) {
-      console.error("Erro ao buscar lançamentos:", error);
-      lancamentosData = [];
+      console.error("[relatorio] Erro ao buscar lançamentos:", error);
+      throw new Error(`Supabase query error: ${error.message}`);
     }
     lancamentos = lancamentosData || [];
+    console.log(`[relatorio] Encontrados ${lancamentos.length} lançamentos`);
     mesLabel = `${getMesNome(mes)} de ${ano}`;
   } else {
     // Relatório GERAL (todos os meses)
+    console.log("[relatorio] Buscando todos os lançamentos (relatório geral)");
+
     let { data: lancamentosData, error } = await sb
       .from("lancamentos")
       .select(`
@@ -90,16 +98,17 @@ export async function gerarRelatorioContas(
         status,
         valor_pago,
         categoria_id,
-        categorias:categoria_id (nome)
+        categorias (nome)
       `)
       .order("data_emissao", { ascending: false })
       .order("data_vencimento", { ascending: true });
 
     if (error) {
-      console.error("Erro ao buscar lançamentos:", error);
-      lancamentosData = [];
+      console.error("[relatorio] Erro ao buscar lançamentos geral:", error);
+      throw new Error(`Supabase query error: ${error.message}`);
     }
     lancamentos = lancamentosData || [];
+    console.log(`[relatorio] Encontrados ${lancamentos.length} lançamentos (geral)`);
     mesLabel = "GERAL (Todos os meses)";
   }
 
