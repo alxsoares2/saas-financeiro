@@ -205,29 +205,47 @@ export async function gerarRelatorioContas(
   doc.moveDown(1);
 
   // Resumo de totais
-  doc.fontSize(11).font("Helvetica-Bold").text("RESUMO");
-  doc.fontSize(10).font("Helvetica");
-  doc.text(`Pago: R$ ${totalPago.toFixed(2)}`);
-  doc.text(`A Pagar: R$ ${totalAPagar.toFixed(2)}`);
-  doc.text(`Vencido: R$ ${totalVencido.toFixed(2)}`);
-  doc.text(`─────────────────────────────────`);
-  doc.text(
+  doc.fontSize(14).font("Helvetica-Bold").text("RESUMO", 50);
+  doc.fontSize(11).font("Helvetica");
+  doc.text(`Pago: R$ ${totalPago.toFixed(2)}`, 50);
+  doc.text(`A Pagar: R$ ${totalAPagar.toFixed(2)}`, 50);
+  doc.text(`Vencido: R$ ${totalVencido.toFixed(2)}`, 50);
+  doc.moveDown(0.3);
+  doc.fontSize(12).font("Helvetica-Bold").text(
     `TOTAL: R$ ${(totalPago + totalAPagar + totalVencido).toFixed(2)}`,
     { underline: true }
   );
 
   doc.moveDown(1);
 
-  // Lista de lançamentos (formato simples)
-  doc.fontSize(10).font("Helvetica-Bold").text("LANÇAMENTOS (data | categoria | valor | situação)");
-  doc.fontSize(9).font("Helvetica");
+  // Tabela de lançamentos com colunas alinhadas
+  doc.fontSize(11).font("Helvetica-Bold").text("LANÇAMENTOS", 50);
   doc.moveDown(0.3);
 
+  // Cabeçalho da tabela
+  doc.fontSize(10).font("Helvetica-Bold");
+  const colDataX = 50;
+  const colCatX = 110;
+  const colValorX = 270;
+  const colSitX = 370;
+  const headerY = doc.y;
+
+  doc.text("Data", colDataX, headerY);
+  doc.text("Categoria", colCatX, headerY);
+  doc.text("Valor", colValorX, headerY);
+  doc.text("Situação", colSitX, headerY);
+
+  doc.moveDown(0.5);
+  doc.moveTo(50, doc.y).lineTo(550, doc.y).stroke();
+  doc.moveDown(0.3);
+
+  // Linhas de dados
+  doc.fontSize(10).font("Helvetica");
   lancamentos.forEach((item: any) => {
     let situacao = "?";
 
     if (item.status === "pago" || item.status === "pago_parcialmente") {
-      situacao = item.status === "pago" ? "Pago" : "Pago Parcial";
+      situacao = item.status === "pago" ? "Pago" : "P.Parcial";
     } else if (item.status === "pendente") {
       if (item.data_vencimento && new Date(item.data_vencimento) < new Date()) {
         situacao = "Vencido";
@@ -237,10 +255,16 @@ export async function gerarRelatorioContas(
     }
 
     const data = item.data_emissao ? formatarData(item.data_emissao) : "—";
-    const categoria = (item.categoria || "—").substring(0, 30);
+    const categoria = (item.categoria || "—").substring(0, 25);
     const valor = `R$ ${Number(item.valor).toFixed(2)}`;
 
-    doc.text(`${data} | ${categoria} | ${valor} | ${situacao}`);
+    const y = doc.y;
+    doc.text(data, colDataX, y, { width: 50 });
+    doc.text(categoria, colCatX, y, { width: 150 });
+    doc.text(valor, colValorX, y, { width: 80, align: "right" });
+    doc.text(situacao, colSitX, y, { width: 80 });
+
+    doc.moveDown(0.35);
   });
 
   try {
