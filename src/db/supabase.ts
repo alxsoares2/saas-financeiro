@@ -31,7 +31,7 @@ export function enterTenant(ctx: TenantCtx): void {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function getClient(): any {
+export function getClient(): any {
   const ctx = als.getStore();
   const url = ctx?.url ?? process.env.SUPABASE_URL!;
   const key = ctx?.key ?? process.env.SUPABASE_SERVICE_ROLE_KEY!;

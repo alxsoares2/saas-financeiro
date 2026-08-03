@@ -506,7 +506,7 @@ async function handleRelatorio(chatId: string, msg: string): Promise<void> {
     }
 
     // Gera PDF (geral se não especificar mês)
-    const pdfBuffer = await gerarRelatorioContas("financeiro", mes, ano);
+    const pdfBuffer = await gerarRelatorioContas(mes, ano);
 
     // Determina nome do arquivo
     const agora = new Date();
@@ -523,7 +523,8 @@ async function handleRelatorio(chatId: string, msg: string): Promise<void> {
     await sendDocumentMessage(chatId, pdfBuffer, nomeArquivo, "application/pdf");
   } catch (err) {
     console.error("Erro ao gerar relatório:", err);
-    await sendTextMessage(chatId, "❌ Erro ao gerar relatório. Tente novamente.");
+    const detalhe = err instanceof Error ? err.message : String(err);
+    await sendTextMessage(chatId, `❌ Erro ao gerar relatório: ${detalhe}`);
   }
 }
 
@@ -1643,8 +1644,17 @@ router.post("/zapi", async (req: Request, res: Response) => {
 
     // Verifica comandos antes de tentar extrair dados financeiros
     if (payload.text?.message) {
-      const isComando = await handleComando(chatId, payload.text.message);
-      if (isComando) return;
+      try {
+        const isComando = await handleComando(chatId, payload.text.message);
+        if (isComando) return;
+      } catch (err) {
+        console.error("[Webhook] Erro ao processar comando:", err);
+        const detalhe = err instanceof Error ? err.message : String(err);
+        await sendTextMessage(chatId, `❌ Erro ao processar comando: ${detalhe}`).catch((e) =>
+          console.error("[Webhook] Falha ao notificar erro de comando:", e)
+        );
+        return;
+      }
     }
 
     // Avisa que está processando quando recebe imagem ou documento

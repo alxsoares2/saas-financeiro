@@ -1,32 +1,6 @@
 import PDFDocument from "pdfkit";
-import { createClient } from "@supabase/supabase-js";
 import { Readable } from "stream";
-
-let supabase: any = null;
-
-function getSupabase() {
-  if (!supabase) {
-    const url = process.env.SUPABASE_URL;
-    const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-    console.log("[relatorio] Iniciando Supabase client:");
-    console.log(`  SUPABASE_URL: ${url ? "OK" : "MISSING"}`);
-    console.log(`  SUPABASE_SERVICE_ROLE_KEY: ${key ? "OK" : "MISSING"}`);
-
-    if (!url) {
-      throw new Error("SUPABASE_URL não está configurado no .env");
-    }
-    if (!key) {
-      throw new Error(
-        "SUPABASE_SERVICE_ROLE_KEY não está configurado no .env (deve ser o mesmo do .env.example)"
-      );
-    }
-
-    supabase = createClient(url, key, { db: { schema: "financeiro" } });
-    console.log("[relatorio] Cliente Supabase criado com sucesso");
-  }
-  return supabase;
-}
+import { getClient } from "../db/supabase.js";
 
 interface Lancamento {
   id: string;
@@ -52,14 +26,13 @@ interface RelatorioData {
 }
 
 export async function gerarRelatorioContas(
-  schema: string,
   mes?: number,
   ano?: number
 ): Promise<Buffer> {
   let lancamentos: any[] = [];
   let mesLabel = "";
 
-  const sb = getSupabase();
+  const sb = getClient();
   console.log("[relatorio] Iniciando geração de relatório...");
 
   // Buscar categorias para mapping
