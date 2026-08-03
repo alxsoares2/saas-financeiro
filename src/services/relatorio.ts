@@ -236,17 +236,20 @@ export async function gerarRelatorioContas(
   const rowHeight = 18;
 
   // Cabeçalho
-  doc.fontSize(9).font("Helvetica-Bold");
+  doc.fontSize(11).font("Helvetica-Bold").fillColor("000000");
   const headerY = doc.y;
-  doc.rect(x1, headerY, colWidth1, rowHeight).fillAndStroke("f0f0f0", "000000");
-  doc.rect(x2, headerY, colWidth2, rowHeight).fillAndStroke("f0f0f0", "000000");
-  doc.rect(x3, headerY, colWidth3, rowHeight).fillAndStroke("f0f0f0", "000000");
-  doc.rect(x4, headerY, colWidth4, rowHeight).fillAndStroke("f0f0f0", "000000");
 
-  doc.text("Data", x1 + 5, headerY + 5, { width: colWidth1 - 10 });
-  doc.text("Categoria", x2 + 5, headerY + 5, { width: colWidth2 - 10 });
-  doc.text("Valor", x3 + 5, headerY + 5, { width: colWidth3 - 10 });
-  doc.text("Situação", x4 + 5, headerY + 5, { width: colWidth4 - 10 });
+  // Desenhar células do cabeçalho
+  doc.rect(x1, headerY, colWidth1, rowHeight).fillAndStroke("d3d3d3", "000000");
+  doc.rect(x2, headerY, colWidth2, rowHeight).fillAndStroke("d3d3d3", "000000");
+  doc.rect(x3, headerY, colWidth3, rowHeight).fillAndStroke("d3d3d3", "000000");
+  doc.rect(x4, headerY, colWidth4, rowHeight).fillAndStroke("d3d3d3", "000000");
+
+  // Escrever cabeçalhos em MAIÚSCULO
+  doc.text("DATA", x1 + 5, headerY + 3, { width: colWidth1 - 10 });
+  doc.text("DESCRIÇÃO", x2 + 5, headerY + 3, { width: colWidth2 - 10 });
+  doc.text("VALOR", x3 + 5, headerY + 3, { width: colWidth3 - 10 });
+  doc.text("SITUAÇÃO", x4 + 5, headerY + 3, { width: colWidth4 - 10 });
 
   doc.moveDown(1.5);
 
