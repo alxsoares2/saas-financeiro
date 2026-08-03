@@ -246,30 +246,14 @@ export async function gerarRelatorioContas(
   doc.rect(x3, headerY, colWidth3, rowHeight).fillAndStroke("cccccc", "000000");
   doc.rect(x4, headerY, colWidth4, rowHeight).fillAndStroke("cccccc", "000000");
 
-  // Escrever texto do cabeçalho usando xHeight para centralizar
-  const textY = headerY + (rowHeight - 12) / 2; // Centralizar verticalmente
+  // Escrever cabeçalho com posicionamento correto (sem sobreposição)
+  const textY = headerY + 3;
+  doc.text("DATA", x1 + 5, textY);
+  doc.text("DESCRIÇÃO", x2 + 5, textY);
+  doc.text("VALOR", x3 + 5, textY);
+  doc.text("SITUAÇÃO", x4 + 5, textY);
 
-  // DATA
-  doc.save();
-  doc.text("DATA", x1 + 5, textY, { width: colWidth1 - 10, ellipsis: true });
-  doc.restore();
-
-  // DESCRIÇÃO
-  doc.save();
-  doc.text("DESCRIÇÃO", x2 + 5, textY, { width: colWidth2 - 10, ellipsis: true });
-  doc.restore();
-
-  // VALOR
-  doc.save();
-  doc.text("VALOR", x3 + 5, textY, { width: colWidth3 - 10, ellipsis: true, align: "right" });
-  doc.restore();
-
-  // SITUAÇÃO
-  doc.save();
-  doc.text("SITUAÇÃO", x4 + 5, textY, { width: colWidth4 - 10, ellipsis: true });
-  doc.restore();
-
-  console.log("[relatorio] Cabeçalho renderizado com sucesso");
+  console.log("[relatorio] Cabeçalho renderizado");
   doc.y = headerY + rowHeight;
   doc.moveDown(0.3);
 
