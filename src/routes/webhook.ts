@@ -4,6 +4,7 @@ import { processar } from "../services/extracao.js";
 import { calcularDRE, formatarDREWhatsApp, formatarResumoWhatsApp } from "../services/dre.js";
 import { gerarAnalise } from "../services/claude.js";
 import { gerarPdfDRE } from "../services/pdf-dre.js";
+import { gerarRelatorioContas } from "../services/relatorio.js";
 import { inferirGrupoDre } from "../services/grupo-dre.js";
 import { sendTextMessage, sendDocumentMessage } from "../services/zapi.js";
 import {
@@ -468,6 +469,62 @@ async function handleResumo(chatId: string): Promise<void> {
     chatId,
     formatarResumoWhatsApp(totalReceitas, totalDespesas, totalPendentes, label)
   );
+}
+
+async function handleRelatorio(chatId: string, msg: string): Promise<void> {
+  try {
+    await sendTextMessage(chatId, "📋 Gerando relatório de contas...");
+
+    // Extrai mês se especificado (ex: "relatorio agosto" ou "relatorio 08")
+    const mesMatch = msg.match(/relatorio\s+(\w+|\d{1,2})/i);
+    let mes: number | undefined;
+    let ano: number | undefined;
+
+    if (mesMatch) {
+      const mesStr = mesMatch[1].toLowerCase();
+      const meses: Record<string, number> = {
+        janeiro: 1, jan: 1,
+        fevereiro: 2, fev: 2,
+        março: 3, mar: 3,
+        abril: 4, abr: 4,
+        maio: 5,
+        junho: 6, jun: 6,
+        julho: 7, jul: 7,
+        agosto: 8, ago: 8,
+        setembro: 9, set: 9,
+        outubro: 10, out: 10,
+        novembro: 11, nov: 11,
+        dezembro: 12, dez: 12,
+      };
+
+      mes = meses[mesStr] || parseInt(mesStr);
+      if (!isNaN(mes) && mes >= 1 && mes <= 12) {
+        ano = new Date().getFullYear();
+      } else {
+        mes = undefined;
+      }
+    }
+
+    // Gera PDF (geral se não especificar mês)
+    const pdfBuffer = await gerarRelatorioContas("financeiro", mes, ano);
+
+    // Determina nome do arquivo
+    const agora = new Date();
+    let nomeArquivo = "relatorio_contas.pdf";
+    if (mes && ano) {
+      const mesNomes = [
+        "janeiro", "fevereiro", "marco", "abril", "maio", "junho",
+        "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"
+      ];
+      nomeArquivo = `relatorio_${mesNomes[mes - 1]}_${ano}.pdf`;
+    }
+
+    // Envia via Z-API
+    await sendDocumentMessage(chatId, pdfBuffer, nomeArquivo, "application/pdf");
+  } catch (err) {
+    console.error("Erro ao gerar relatório:", err);
+    await sendTextMessage(chatId, "❌ Erro ao gerar relatório. Tente novamente.");
+  }
 }
 
 async function handlePendentes(chatId: string): Promise<void> {
@@ -1355,6 +1412,11 @@ async function handleComando(chatId: string, msg: string): Promise<boolean> {
 
   if (/^resumo\b/i.test(trimmed)) {
     await handleResumo(chatId);
+    return true;
+  }
+
+  if (/^relatorio\b/i.test(trimmed)) {
+    await handleRelatorio(chatId, trimmed);
     return true;
   }
 

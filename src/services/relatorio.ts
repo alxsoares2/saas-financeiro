@@ -33,25 +33,40 @@ export async function gerarRelatorioContas(
   mes?: number,
   ano?: number
 ): Promise<Buffer> {
-  // Se não especificar mês, usa o mês atual
-  const agora = new Date();
-  const mesAtual = mes || agora.getMonth() + 1;
-  const anoAtual = ano || agora.getFullYear();
+  let lancamentos: any[] = [];
+  let mesLabel = "";
 
-  // Query os lançamentos do mês
-  let { data: lancamentosData, error } = await supabase
-    .from("lancamentos")
-    .select("*")
-    .eq("mes", mesAtual)
-    .eq("ano", anoAtual)
-    .order("data_vencimento", { ascending: true });
+  if (mes && ano) {
+    // Relatório de um mês específico
+    let { data: lancamentosData, error } = await supabase
+      .from("lancamentos")
+      .select("*")
+      .eq("mes", mes)
+      .eq("ano", ano)
+      .order("data_vencimento", { ascending: true });
 
-  if (error) {
-    console.error("Erro ao buscar lançamentos:", error);
-    lancamentosData = [];
+    if (error) {
+      console.error("Erro ao buscar lançamentos:", error);
+      lancamentosData = [];
+    }
+    lancamentos = lancamentosData || [];
+    mesLabel = `${getMesNome(mes)} de ${ano}`;
+  } else {
+    // Relatório GERAL (todos os meses)
+    let { data: lancamentosData, error } = await supabase
+      .from("lancamentos")
+      .select("*")
+      .order("ano", { ascending: false })
+      .order("mes", { ascending: false })
+      .order("data_vencimento", { ascending: true });
+
+    if (error) {
+      console.error("Erro ao buscar lançamentos:", error);
+      lancamentosData = [];
+    }
+    lancamentos = lancamentosData || [];
+    mesLabel = "GERAL (Todos os meses)";
   }
-
-  const lancamentos = lancamentosData;
 
   // Agrupa por categoria e calcula totais
   const porCategoria: Record<string, Lancamento[]> = {};
@@ -82,10 +97,7 @@ export async function gerarRelatorioContas(
   doc.fontSize(20).font("Helvetica-Bold").text("RELATÓRIO DE CONTAS");
   doc.fontSize(12)
     .font("Helvetica")
-    .text(
-      `${getMesNome(mesAtual)} de ${anoAtual}`,
-      { align: "left", underline: true }
-    );
+    .text(mesLabel, { align: "left", underline: true });
 
   doc.moveDown(1);
 
