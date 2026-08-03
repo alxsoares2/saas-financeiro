@@ -203,6 +203,9 @@ Exemplos (não erre estes):
   - etiqueta → "Etiquetas" (vai no CMV)
   - gasolina, combustível, diesel, IPVA, mecânico → "Despesas com veículos (comb., manut., IPVA, outros)"
   - refrigerante, coca, guaraná, suco, água → "Bebidas Não alcoólicas"
+  - IMPORTANTE: internet, banda larga, provedor, telecom, serviço de dados, wifi → "Internet" (NÃO é "Conta de Luz")
+  - IMPORTANTE: conta de luz, eletricidade, energia elétrica → "Conta de Luz" (NÃO confunda com internet)
+  - IMPORTANTE: conta de água, consumo de água → "Conta de Água" (NÃO confunda com luz)
 
 Categorias disponíveis (use o nome EXATO):
   CMV: "Bovinos", "Suínos", "Ovinos", "Aves", "Frutos do Mar", "Frutas, legumes e verduras FLV", "Doces industrializados", "Latícinios", "Congelados", "Grãos/Cereais/Farinha", "Óleos/Azeites/Gordura", "Café", "Conservas", "Condimentos/Temperos/Molhos", "Embalagens e Descartáveis", "Etiquetas"
