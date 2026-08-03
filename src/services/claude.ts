@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import { ExtractedDocument, ExtracaoMultipla } from "../types.js";
 
-const pdfParse = require("pdf-parse/lib/pdf-parse.js");
+const pdfParse = require("pdf-parse");
 
 let _client: OpenAI | null = null;
 
