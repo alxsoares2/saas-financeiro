@@ -68,7 +68,7 @@ export async function gerarRelatorioContas(
         status,
         valor_pago,
         categoria_id,
-        categorias (nome)
+        categorias:categoria_id(nome)
       `)
       .gte("data_emissao", dataInicio)
       .lt("data_emissao", dataFim)
@@ -98,7 +98,7 @@ export async function gerarRelatorioContas(
         status,
         valor_pago,
         categoria_id,
-        categorias (nome)
+        categorias:categoria_id(nome)
       `)
       .order("data_emissao", { ascending: false })
       .order("data_vencimento", { ascending: true });
