@@ -195,10 +195,11 @@ async function registrarMultipla(
   const totalGeral = multipla.itens.reduce((s, i) => s + i.valor, 0);
   const { status, dataPagamento } = determinarStatusDocumento(multipla.tipo_documento);
 
-  const criados: { descricao: string; valor: number; id: string; baixaConfianca: boolean; variacao?: number; quantidade?: number; unidade?: string; semCategoria?: boolean }[] = [];
+  const criados: { descricao: string; valor: number; id: string; baixaConfianca: boolean; variacao?: number; quantidade?: number; unidade?: string; semCategoria?: boolean; categoriaNome?: string }[] = [];
   for (let idx = 0; idx < multipla.itens.length; idx++) {
     const item = multipla.itens[idx];
     let categoriaId: string | undefined;
+    let categoriaNome: string | undefined;
     let semCategoria = false;
 
     // Rede de segurança: nenhum item pode ser salvo sem categoria.
@@ -212,6 +213,7 @@ async function registrarMultipla(
       const grupoDre = inferirGrupoDre(catNome, item.tipo_lancamento);
       const cat = await findOrCreateCategoria(catNome, grupoDre, item.tipo_lancamento);
       categoriaId = cat.id;
+      categoriaNome = cat.nome;
     } catch {
       semCategoria = true; // falhou ao resolver categoria — marca pra revisão
     }
@@ -263,12 +265,16 @@ async function registrarMultipla(
       quantidade: item.quantidade,
       unidade: item.unidade,
       semCategoria,
+      categoriaNome,
     });
   }
 
   const linhasItens = criados
     .map((c) => {
       let linha = `  • ${c.descricao}: R$ ${brl(c.valor)} [${codigoCurto(c.id)}]${c.baixaConfianca ? " ⚠️" : ""}`;
+      if (c.categoriaNome) {
+        linha += `\n     🏷️ ${c.categoriaNome}`;
+      }
       if (c.quantidade && c.unidade) {
         linha += ` (${c.quantidade}${c.unidade})`;
       }
