@@ -1,7 +1,7 @@
-FROM node:22-alpine
+FROM node:22-slim
 
 # Instala Poppler (pdftoppm) - leve e open source
-RUN apk add --no-cache poppler-utils
+RUN apt-get update && apt-get install -y poppler-utils && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
