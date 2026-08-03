@@ -1,5 +1,12 @@
 import OpenAI from "openai";
+import { exec } from "child_process";
+import { promisify } from "util";
+import { writeFileSync, readFileSync, unlinkSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import { ExtractedDocument, ExtracaoMultipla } from "../types.js";
+
+const execAsync = promisify(exec);
 
 let _client: OpenAI | null = null;
 
@@ -323,6 +330,39 @@ Analise:
 
 export async function extractMultiFromPDF(pdfBuffer: Buffer): Promise<ExtracaoMultipla | null> {
   const sizeKB = Math.round(pdfBuffer.length / 1024);
-  console.log(`[OpenAI] PDF não suportado (${sizeKB}KB) — use screenshot ou imagem do documento`);
-  return null;
+  console.log(`[OpenAI] Iniciando conversão de PDF → PNG (${sizeKB}KB)`);
+
+  const tmpDir = tmpdir();
+  const pdfPath = join(tmpDir, `doc-${Date.now()}.pdf`);
+  const pngPath = join(tmpDir, `doc-${Date.now()}.png`);
+
+  try {
+    // Escreve PDF em arquivo temporário
+    writeFileSync(pdfPath, pdfBuffer);
+
+    // Converte primeira página do PDF pra PNG usando ImageMagick
+    // Format: PDF[0] pra primeira página; -density 150 para melhor qualidade
+    await execAsync(`convert -density 150 "${pdfPath}[0]" -quality 85 "${pngPath}"`);
+
+    // Lê imagem convertida
+    const pngBuffer = readFileSync(pngPath);
+    console.log(`[OpenAI] PDF convertido para PNG (${Math.round(pngBuffer.length / 1024)}KB)`);
+
+    // Processa como imagem normal
+    const result = await extractMultiFromImage(pngBuffer, "image/png", "Documento extraído de PDF");
+
+    // Limpa arquivos temporários
+    unlinkSync(pdfPath);
+    unlinkSync(pngPath);
+
+    return result;
+  } catch (err) {
+    console.error(`[OpenAI] Erro ao converter PDF:`, err);
+    // Tenta limpar arquivos mesmo com erro
+    try {
+      unlinkSync(pdfPath);
+      unlinkSync(pngPath);
+    } catch {}
+    return null;
+  }
 }
