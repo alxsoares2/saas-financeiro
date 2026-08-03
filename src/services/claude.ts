@@ -139,7 +139,7 @@ export async function extractFromText(text: string): Promise<ExtractedDocument |
 // ── Extração multi-item (imagens e PDFs de notas com vários produtos) ─────────
 
 const EXTRACTION_MULTI_SYSTEM = `Você é especializado em leitura de documentos financeiros para restaurantes brasileiros.
-Analise o documento e agrupe os itens por CATEGORIA DO DRE.
+Analise o documento e extraia EXATAMENTE as categorias abaixo (sem invenções).
 Retorne SOMENTE JSON válido, sem markdown, sem explicações.
 
 IMPORTANTE: Recibos, faturas, comprovantes de pagamento, extratos, boletos e notas são SEMPRE documentos financeiros. Não pule.
@@ -160,8 +160,8 @@ Schema quando for documento financeiro:
     {
       "descricao": string,
       "valor": number,
-      "quantidade": number | null,  // ex: 10 (kg, un, litros)
-      "unidade": string | null,     // ex: "kg", "un", "l"
+      "quantidade": number | null,
+      "unidade": string | null,
       "tipo_lancamento": "receita" | "despesa",
       "categoria_sugerida": string | null,
       "confianca": "alta" | "media" | "baixa"
@@ -169,62 +169,89 @@ Schema quando for documento financeiro:
   ]
 }
 
-Regras de agrupamento:
-- Use "comprovante" para pagamentos já realizados (PIX enviado, transferência concluída). Use "boleto" para contas ainda a pagar.
-- Agrupe TUDO da mesma categoria DRE em UM único item com o valor somado. Exemplo: 20x Coca-Cola + 1x Powerade = 1 item "Bebidas Não Alcoólicas" com a soma dos dois. NUNCA crie dois itens para a mesma categoria.
-- Não liste produto por produto — agrupe pela categoria DRE
-- Para documentos com item único (boleto de água, conta de luz), use array com 1 item
+Regras:
+- Use "comprovante" para pagamentos já realizados. Use "boleto" para contas ainda a pagar.
+- Agrupe TUDO da mesma categoria em UM único item com valor somado.
 - valor sempre número sem formatação (ex: 1500.90)
-- valor_total_documento: valor total final mostrado no documento (campo "Total", "Total a Pagar", "Valor Total"). Se não visível, null. A SOMA dos itens deve ser igual a esse total — se não bater, revise os valores dos itens.
-- Atenção ao formato de data em cupons térmicos brasileiros: o formato é DD/MM/AAAA. Exemplo: 01/08/2026 = dia 01 de agosto de 2026.
-- QUANTIDADE E UNIDADE (importante para rastreamento de variação de preço):
-  * Se o documento mostrar quantidade explícita (ex: "10kg", "5 unidades", "2L"), EXTRAIA:
-    - quantidade: número (ex: 10, 5, 2)
-    - unidade: texto (ex: "kg", "un", "l")
-  * Exemplo: "Tomate 10kg R$ 100" → quantidade: 10, unidade: "kg", valor: 100
-  * Se não houver quantidade, deixe ambos null
-  * Quando agrupa por categoria (ex: 10kg + 5kg de legumes diferentes), SOME as quantidades:
-    - Exemplo: "10kg alface + 5kg tomate" → quantidade: 15, unidade: "kg" (mesmo grupo FLV)
+- Atenção ao formato de data: DD/MM/AAAA (Ex: 01/08/2026 = 1º de agosto)
 
-ATENÇÃO — iFood Pago vs Tarifa iFood:
-- "iFood Pago" / "IFOOD PAGO IP" é uma conta digital (banco) que restaurantes usam para fazer PIX e transferências. NÃO é taxa de plataforma.
-- "Tarifa iFood" só se aplica quando o documento é uma fatura/boleto de comissão cobrada pelo iFood pelo uso do app de delivery.
-- Se o comprovante mostra PIX enviado de uma conta iFood Pago para uma PESSOA ou EMPRESA TERCEIRA (campo Destino/Favorecido com nome diferente do iFood), classifique conforme o destinatário e o contexto — pode ser salário, fornecedor, aluguel, etc. Não use "Tarifa iFood" nesses casos.
+⛔ REGRA CRÍTICA — categoria_sugerida é OBRIGATÓRIA. NUNCA devolva null.
+Use EXATAMENTE uma categoria da lista abaixo. Sem exceções, sem criatividade.
 
-⛔ REGRA CRÍTICA — categoria_sugerida é OBRIGATÓRIA em TODO item. NUNCA devolva null.
-Todo produto tem categoria. Sempre escolha a MAIS PRÓXIMA da lista abaixo (use o nome EXATO).
-Na dúvida entre duas, escolha uma — nunca deixe em branco.
-Exemplos (não erre estes):
-  - queijo, muçarela, leite, manteiga, requeijão, iogurte, presunto → "Latícinios"
-  - carne, boi, alcatra, patinho, acém → "Bovinos"
-  - frango, coxa, peito, asa → "Aves"
-  - tomate, cebola, alface, batata, fruta → "Frutas, legumes e verduras FLV"
-  - embalagem, descartável, marmita, sacola, pote → "Embalagens e Descartáveis" (vai no CMV)
-  - etiqueta → "Etiquetas" (vai no CMV)
-  - gasolina, combustível, diesel, IPVA, mecânico → "Despesas com veículos (comb., manut., IPVA, outros)"
-  - refrigerante, coca, guaraná, suco, água → "Bebidas Não alcoólicas"
-  - IMPORTANTE: internet, banda larga, provedor, telecom, serviço de dados, wifi → "Internet" (NÃO é "Conta de Luz")
-  - IMPORTANTE: conta de luz, eletricidade, energia elétrica → "Conta de Luz" (NÃO confunda com internet)
-  - IMPORTANTE: conta de água, consumo de água → "Conta de Água" (NÃO confunda com luz)
+MAPEAMENTO DE CATEGORIAS REAIS DO CLIENTE:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Categorias disponíveis (use o nome EXATO):
-  CMV: "Bovinos", "Suínos", "Ovinos", "Aves", "Frutos do Mar", "Frutas, legumes e verduras FLV", "Doces industrializados", "Latícinios", "Congelados", "Grãos/Cereais/Farinha", "Óleos/Azeites/Gordura", "Café", "Conservas", "Condimentos/Temperos/Molhos", "Embalagens e Descartáveis", "Etiquetas"
-  Bebidas (venda direta): "Cervejas", "Destilados", "Vinhos", "Bebidas Não alcoólicas"
-  Materiais de apoio: "Material de limpeza e higiene"
-  Mão de obra eventual: "Mão de Obra Eventual / Freelancer"
-  Tarifas: "Cartão de Crédito", "Cartão de Débito", "Ifood", "Pix"
-  Impostos: "PIS", "COFINS", "FUNCEP", "FEEF", "Simples Nacional Consultoria", "ICMS bebida quente", "ICMS fronteira", "ICMS normal"
-  Ocupação: "Aluguel do estabelecimento", "IPTU", "TCR", "Outros impostos e taxas"
-  Utilidades: "Conta de Luz", "Conta de Água", "Telefone", "Conta de Gás"
-  Administrativas: "Material de Escritório / informática", "Sistema Gerencial", "Internet", "Seguro", "Aluguel de maquinetas", "Aluguel de Equipamentos", "Despesas de Locomoção", "Assinaturas digitais/Apps/Softwares", "Sindicato", "Despesas com veículos (comb., manut., IPVA, outros)", "Outras despesas administrativas"
-  Marketing: "Anúncios", "Criação de conteúdo/Influencers", "Divulgação"
-  Manutenção: "Predial", "Reparos Máquinas e Equipamentos", "Preventiva"
-  Aquisição: "Equipamentos", "Utensílios cozinha e salão"
-  Serviços terceirizados: "Contabilidade", "Segurança", "Segurança eletrônica", "Transportadora", "Serviços gráficos", "Dedetização", "Advocacia", "Músicos/bandas", "Agência de Marketing", "Jardinagem/Paisagismo/Decoração", "Consultoria Gastronomia", "Assessoria Nutricional"
-  Pessoal: "Salários", "Vale-Transporte", "Férias", "INSS", "FGTS", "Despesas com admissão e demissão", "Assistência médica", "Medicina do Trabalho", "Seguro de Vida", "13º salário", "Rescisões", "Extras", "Gratificação", "Contribuição sindical / assistencial", "Retenção IRPF", "Salário Família", "Bolsa Auxilio Estágio", "Cursos profissionalizantes", "Uniformes", "Ajuda de custo (Moradia)"
-  Retirada de sócios: "Retirada de lucro de Sócios"
-  Financeiras: "Despesas Bancárias", "IOF", "Empréstimos/Giro", "Juros"
-  Receitas: "Vendas - Dinheiro", "Vendas - Pix", "Vendas - Cartão de Débito", "Vendas - Cartão de Crédito", "Vendas - iFood", "Vendas - Vale Refeição", "Serviços - Eventos", "Outras Receitas"`;
+RECEITAS:
+  "Vendas - Dinheiro", "Vendas - Pix", "Vendas - Cartão de Débito", "Vendas - Cartão de Crédito",
+  "Vendas - iFood", "Vendas - Vale Refeição", "Serviços - Eventos", "Outras Receitas"
+
+CMV (Custo da Mercadoria Vendida):
+  "Bovinos", "Suínos", "Ovinos", "Aves", "Frutos do Mar", "Frutas, legumes e verduras FLV",
+  "Doces industrializados", "Latícinios", "Congelados", "Grãos/Cereais/Farinha", "Óleos/Azeites/Gordura",
+  "Café", "Conservas", "Condimentos/Temperos/Molhos", "Embalagens e Descartáveis", "Etiquetas"
+
+BEBIDAS (Materiais de Venda Direta):
+  "Cervejas", "Destilados", "Bebidas Não alcoólicas", "Vinhos"
+
+MATERIAIS DE APOIO:
+  "Material de limpeza e higiene"
+
+MANO DE OBRA EVENTUAL:
+  "Mão de Obra Eventual / Freelancer"
+
+TARIFAS (Cartões/Delivery):
+  "Cartão de Crédito", "Cartão de Débito", "Ifood", "Pix"
+
+IMPOSTOS VARIÁVEIS:
+  "PIS", "COFINS", "FUNCEP", "FEEF", "Simples Nacional Consultoria", "ICMS bebida quente", "ICMS fronteira", "ICMS normal"
+
+OCUPAÇÃO:
+  "Aluguel do estabelecimento", "IPTU", "TCR", "Outros impostos e taxas"
+
+UTILIDADES PÚBLICAS:
+  "Conta de Luz", "Conta de Água", "Telefone", "Conta de Gás"
+
+DESPESAS ADMINISTRATIVAS (⭐ INTERNET VAI AQUI):
+  "Material de Escritório / informática", "Sistema Gerencial", "Internet", "Seguro",
+  "Aluguel de maquinetas", "Aluguel de Equipamentos", "Despesas de Locomoção",
+  "Assinaturas digitais/Apps/Softwares", "Sindicato", "Despesas com veículos (comb., manut., IPVA, outros)",
+  "Outras despesas administrativas"
+
+MARKETING:
+  "Anúncios", "Criação de conteúdo/Influencers", "Divulgação"
+
+MANUTENÇÃO:
+  "Predial", "Reparos Máquinas e Equipamentos", "Preventiva"
+
+AQUISIÇÃO:
+  "Equipamentos", "Utensílios cozinha e salão"
+
+SERVIÇOS TERCEIRIZADOS:
+  "Contabilidade", "Segurança", "Segurança eletrônica", "Transportadora", "Serviços gráficos",
+  "Dedetização", "Advocacia", "Músicos/bandas", "Agência de Marketing", "Jardinagem/Paisagismo/Decoração",
+  "Consultoria Gastronomia", "Assessoria Nutricional"
+
+PESSOAL (Mão de Obra Fixa):
+  "Salários", "Vale-Transporte", "Férias", "INSS", "FGTS", "Despesas com admissão e demissão",
+  "Assistência médica", "Medicina do Trabalho", "Seguro de Vida", "13º salário", "Rescisões", "Extras",
+  "Gratificação", "Contribuição sindical / assistencial", "Retenção IRPF", "Salário Família",
+  "Bolsa Auxilio Estágio", "Cursos profissionalizantes", "Uniformes", "Ajuda de custo (Moradia)"
+
+RETIRADA DE SÓCIOS:
+  "Retirada de lucro de Sócios"
+
+FINANCEIRAS:
+  "Despesas Bancárias", "IOF", "Empréstimos/Giro", "Juros"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+EXEMPLOS DE MAPEAMENTO (estude bem):
+  • "Brisanet", "Vivo", "Claro", "provedor", "banda larga", "internet" → "Internet" (ADMINISTRATIVAS, NÃO UTILIDADES)
+  • "Copasa", "Sabesp", "conta de água" → "Conta de Água" (UTILIDADES)
+  • "CEMIG", "Neon", "Light", "conta de luz", "energia" → "Conta de Luz" (UTILIDADES)
+  • "queijo", "manteiga", "leite" → "Latícinios" (CMV)
+  • "carne", "boi", "alcatra" → "Bovinos" (CMV)
+  • "frango", "peito", "coxa" → "Aves" (CMV)`;
 
 function parseMulti(raw: string): ExtracaoMultipla | null {
   try {
