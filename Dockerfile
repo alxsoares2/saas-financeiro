@@ -1,7 +1,7 @@
 FROM node:22-alpine
 
-# Instala ImageMagick
-RUN apk add --no-cache imagemagick
+# Instala Ghostscript (mais leve que ImageMagick)
+RUN apk add --no-cache ghostscript
 
 WORKDIR /app
 

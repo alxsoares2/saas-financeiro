@@ -340,9 +340,8 @@ export async function extractMultiFromPDF(pdfBuffer: Buffer): Promise<ExtracaoMu
     // Escreve PDF em arquivo temporário
     writeFileSync(pdfPath, pdfBuffer);
 
-    // Converte primeira página do PDF pra PNG usando ImageMagick
-    // Format: PDF[0] pra primeira página; -density 150 para melhor qualidade
-    await execAsync(`convert -density 150 "${pdfPath}[0]" -quality 85 "${pngPath}"`);
+    // Converte primeira página do PDF pra PNG usando Ghostscript
+    await execAsync(`gs -sDEVICE=pngalpha -dFirstPage=1 -dLastPage=1 -r150 -o "${pngPath}" "${pdfPath}"`);
 
     // Lê imagem convertida
     const pngBuffer = readFileSync(pngPath);
