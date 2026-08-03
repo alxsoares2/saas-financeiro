@@ -48,6 +48,18 @@ export async function gerarRelatorioContas(
 
   const sb = getSupabase();
 
+  // Buscar categorias para mapping
+  const { data: categorias, error: catError } = await sb
+    .from("categorias")
+    .select("id, nome");
+
+  if (catError) {
+    console.error("[relatorio] Erro ao buscar categorias:", catError);
+  }
+  const categoriasMap = new Map(
+    (categorias || []).map((c: any) => [c.id, c.nome])
+  );
+
   if (mes && ano) {
     // Relatório de um mês específico
     const dataInicio = `${ano}-${String(mes).padStart(2, "0")}-01`;
@@ -57,19 +69,7 @@ export async function gerarRelatorioContas(
 
     let { data: lancamentosData, error } = await sb
       .from("lancamentos")
-      .select(`
-        id,
-        tipo,
-        descricao,
-        valor,
-        data_emissao,
-        data_vencimento,
-        data_pagamento,
-        status,
-        valor_pago,
-        categoria_id,
-        categorias:categoria_id(nome)
-      `)
+      .select("*")
       .gte("data_emissao", dataInicio)
       .lt("data_emissao", dataFim)
       .order("data_vencimento", { ascending: true });
@@ -78,7 +78,10 @@ export async function gerarRelatorioContas(
       console.error("[relatorio] Erro ao buscar lançamentos:", error);
       throw new Error(`Supabase query error: ${error.message}`);
     }
-    lancamentos = lancamentosData || [];
+    lancamentos = (lancamentosData || []).map((l: any) => ({
+      ...l,
+      categoria: categoriasMap.get(l.categoria_id) || "Sem categoria",
+    }));
     console.log(`[relatorio] Encontrados ${lancamentos.length} lançamentos`);
     mesLabel = `${getMesNome(mes)} de ${ano}`;
   } else {
@@ -87,19 +90,7 @@ export async function gerarRelatorioContas(
 
     let { data: lancamentosData, error } = await sb
       .from("lancamentos")
-      .select(`
-        id,
-        tipo,
-        descricao,
-        valor,
-        data_emissao,
-        data_vencimento,
-        data_pagamento,
-        status,
-        valor_pago,
-        categoria_id,
-        categorias:categoria_id(nome)
-      `)
+      .select("*")
       .order("data_emissao", { ascending: false })
       .order("data_vencimento", { ascending: true });
 
@@ -107,7 +98,10 @@ export async function gerarRelatorioContas(
       console.error("[relatorio] Erro ao buscar lançamentos geral:", error);
       throw new Error(`Supabase query error: ${error.message}`);
     }
-    lancamentos = lancamentosData || [];
+    lancamentos = (lancamentosData || []).map((l: any) => ({
+      ...l,
+      categoria: categoriasMap.get(l.categoria_id) || "Sem categoria",
+    }));
     console.log(`[relatorio] Encontrados ${lancamentos.length} lançamentos (geral)`);
     mesLabel = "GERAL (Todos os meses)";
   }
@@ -119,7 +113,7 @@ export async function gerarRelatorioContas(
   let totalVencido = 0;
 
   (lancamentos || []).forEach((l: any) => {
-    const categoria = l.categorias?.nome || "Sem categoria";
+    const categoria = l.categoria || "Sem categoria";
     if (!porCategoria[categoria]) {
       porCategoria[categoria] = [];
     }
