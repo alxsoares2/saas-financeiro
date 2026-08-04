@@ -272,7 +272,16 @@ async function registrarMultipla(
 
   const linhasItens = criados
     .map((c) => {
-      let linha = `  • ${c.descricao}: R$ ${brl(c.valor)} [${codigoCurto(c.id)}]${c.baixaConfianca ? " ⚠️" : ""}`;
+      // Itens da mesma categoria vêm agrupados numa descrição só, separada por vírgula.
+      // Quebra em lista numerada pra ficar legível em vez de um parágrafo gigante.
+      const produtos = c.descricao.split(",").map((p) => p.trim()).filter(Boolean);
+      let linha: string;
+      if (produtos.length > 1) {
+        const lista = produtos.map((p, i) => `     ${i + 1}. ${p}`).join("\n");
+        linha = `  • R$ ${brl(c.valor)} [${codigoCurto(c.id)}]${c.baixaConfianca ? " ⚠️" : ""}\n${lista}`;
+      } else {
+        linha = `  • ${c.descricao}: R$ ${brl(c.valor)} [${codigoCurto(c.id)}]${c.baixaConfianca ? " ⚠️" : ""}`;
+      }
       if (c.categoriaNome) {
         linha += `\n     🏷️ ${c.categoriaNome}`;
       }
