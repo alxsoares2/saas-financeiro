@@ -172,6 +172,10 @@ Schema quando for documento financeiro:
 Regras:
 - Use "comprovante" para pagamentos já realizados. Use "boleto" para contas ainda a pagar.
 - Agrupe TUDO da mesma categoria em UM único item com valor somado.
+- Ao agrupar vários produtos na mesma "descricao", separe cada um por vírgula e inclua a
+  quantidade/unidade de CADA produto entre parênteses logo após o nome dele, lendo a coluna
+  de quantidade do documento. Ex: "Queijo Mussarela Fat KG (1,076kg), Leite UHT CX 1L (2un)".
+  Se não conseguir ler a quantidade de um produto específico, omita os parênteses só dele.
 - valor sempre número sem formatação (ex: 1500.90)
 - Atenção ao formato de data: DD/MM/AAAA (Ex: 01/08/2026 = 1º de agosto)
 
