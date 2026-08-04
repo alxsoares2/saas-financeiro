@@ -145,6 +145,40 @@ function codigoCurto(id: string): string {
   return id.replace(/-/g, "").substring(0, 6).toUpperCase();
 }
 
+// Separa por vírgula, mas ignora vírgulas DENTRO de parênteses — necessário
+// porque a quantidade vem no formato brasileiro "(6,070kg)", que usa vírgula
+// como separador decimal e não pode ser confundida com separador de produtos.
+function splitProdutos(descricao: string): string[] {
+  const partes: string[] = [];
+  let atual = "";
+  let profundidade = 0;
+  for (const ch of descricao) {
+    if (ch === "(") profundidade++;
+    if (ch === ")") profundidade--;
+    if (ch === "," && profundidade === 0) {
+      partes.push(atual.trim());
+      atual = "";
+    } else {
+      atual += ch;
+    }
+  }
+  if (atual.trim()) partes.push(atual.trim());
+  return partes.filter(Boolean);
+}
+
+// Itens da mesma categoria vêm agrupados numa descrição só, separada por vírgula.
+// Quebra em lista numerada pra ficar legível em vez de um parágrafo gigante.
+function listarProdutos(descricao: string): { multiplos: boolean; texto: string } {
+  const produtos = splitProdutos(descricao);
+  if (produtos.length <= 1) {
+    return { multiplos: false, texto: descricao };
+  }
+  return {
+    multiplos: true,
+    texto: produtos.map((p, i) => `     ${i + 1}. ${p}`).join("\n"),
+  };
+}
+
 // ── Confirmação de extração com dúvida ───────────────────────────────────────
 
 function precisaConfirmacao(multipla: ExtracaoMultipla): string | null {
@@ -165,7 +199,12 @@ async function sendConfirmacaoPendente(chatId: string, multipla: ExtracaoMultipl
   const totalDoc = multipla.valor_total_documento;
 
   const linhasItens = multipla.itens
-    .map((i) => `  • ${i.descricao}: R$ ${brl(i.valor)}`)
+    .map((i) => {
+      const { multiplos, texto } = listarProdutos(i.descricao);
+      return multiplos
+        ? `  • R$ ${brl(i.valor)}\n${texto}`
+        : `  • ${texto}: R$ ${brl(i.valor)}`;
+    })
     .join("\n");
 
   const linhas: (string | null)[] = [
@@ -272,15 +311,12 @@ async function registrarMultipla(
 
   const linhasItens = criados
     .map((c) => {
-      // Itens da mesma categoria vêm agrupados numa descrição só, separada por vírgula.
-      // Quebra em lista numerada pra ficar legível em vez de um parágrafo gigante.
-      const produtos = c.descricao.split(",").map((p) => p.trim()).filter(Boolean);
+      const { multiplos, texto } = listarProdutos(c.descricao);
       let linha: string;
-      if (produtos.length > 1) {
-        const lista = produtos.map((p, i) => `     ${i + 1}. ${p}`).join("\n");
-        linha = `  • R$ ${brl(c.valor)} [${codigoCurto(c.id)}]${c.baixaConfianca ? " ⚠️" : ""}\n${lista}`;
+      if (multiplos) {
+        linha = `  • R$ ${brl(c.valor)} [${codigoCurto(c.id)}]${c.baixaConfianca ? " ⚠️" : ""}\n${texto}`;
       } else {
-        linha = `  • ${c.descricao}: R$ ${brl(c.valor)} [${codigoCurto(c.id)}]${c.baixaConfianca ? " ⚠️" : ""}`;
+        linha = `  • ${texto}: R$ ${brl(c.valor)} [${codigoCurto(c.id)}]${c.baixaConfianca ? " ⚠️" : ""}`;
       }
       if (c.categoriaNome) {
         linha += `\n     🏷️ ${c.categoriaNome}`;
