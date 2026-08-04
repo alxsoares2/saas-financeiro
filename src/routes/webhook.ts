@@ -232,12 +232,25 @@ async function registrarMultipla(
   messageId: string
 ): Promise<void> {
   const fornecedor = multipla.fornecedor ?? "Documento";
-  const totalGeral = multipla.itens.reduce((s, i) => s + i.valor, 0);
+  const somaItens = multipla.itens.reduce((s, i) => s + i.valor, 0);
   const { status, dataPagamento } = determinarStatusDocumento(multipla.tipo_documento);
+
+  // Se o total do documento (já com desconto do cupom aplicado) for diferente
+  // da soma dos itens que a IA extraiu, ajusta o valor de cada item
+  // proporcionalmente pra bater com o valor realmente pago. Sem isso, um
+  // desconto no cupom (não distribuído item a item pela IA) fazia o sistema
+  // registrar a mais do que o cliente pagou de fato.
+  const totalDocumento = multipla.valor_total_documento;
+  const fatorAjuste =
+    totalDocumento != null && somaItens > 0 && Math.abs(somaItens - totalDocumento) > 0.01
+      ? totalDocumento / somaItens
+      : 1;
+  const totalGeral = totalDocumento ?? somaItens;
 
   const criados: { descricao: string; valor: number; id: string; baixaConfianca: boolean; variacao?: number; quantidade?: number; unidade?: string; semCategoria?: boolean; categoriaNome?: string }[] = [];
   for (let idx = 0; idx < multipla.itens.length; idx++) {
     const item = multipla.itens[idx];
+    const valorAjustado = Math.round(item.valor * fatorAjuste * 100) / 100;
     let categoriaId: string | undefined;
     let categoriaNome: string | undefined;
     let semCategoria = false;
@@ -263,7 +276,7 @@ async function registrarMultipla(
         fornecedor: multipla.fornecedor,
         cnpj_cpf: multipla.cnpj_cpf,
         descricao: item.descricao,
-        valor_total: item.valor,
+        valor_total: valorAjustado,
         data_emissao: multipla.data_emissao,
         data_vencimento: multipla.data_vencimento,
         categoria_sugerida: item.categoria_sugerida,
@@ -285,7 +298,7 @@ async function registrarMultipla(
           item.descricao,
           item.quantidade,
           item.unidade,
-          item.valor,
+          valorAjustado,
           lancamento.id,
           multipla.fornecedor,
           multipla.data_emissao
@@ -298,7 +311,7 @@ async function registrarMultipla(
 
     criados.push({
       descricao: item.descricao,
-      valor: item.valor,
+      valor: valorAjustado,
       id: lancamento.id,
       baixaConfianca: item.confianca !== "alta",
       variacao,
