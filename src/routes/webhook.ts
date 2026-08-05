@@ -1806,14 +1806,23 @@ router.post("/zapi", async (req: Request, res: Response) => {
             categoriaId = cat.id;
           } catch { /* ignora */ }
         }
-        const resolvido = await handleComprovante(chatId, item.valor, categoriaId, item.categoria_sugerida, urlArquivo, messageId);
-        if (resolvido) return;
-        // Sem match — registra como pago diretamente
+
+        // Conciliação (bater com boleto pendente) só faz sentido pra DESPESA —
+        // uma receita não tem "boleto a pagar" pra procurar. Sem essa checagem,
+        // todo comprovante de venda/recebimento caía na fila de "não conciliado"
+        // à toa, mesmo já tendo sido classificado corretamente como receita.
+        if (item.tipo_lancamento === "despesa") {
+          const resolvido = await handleComprovante(chatId, item.valor, categoriaId, item.categoria_sugerida, urlArquivo, messageId);
+          if (resolvido) return;
+        }
+
+        // Receita, ou despesa sem match — registra direto.
         const lanc = await createLancamento(
           { tipo_documento: "comprovante", fornecedor: multipla.fornecedor, cnpj_cpf: multipla.cnpj_cpf, descricao: item.descricao, valor_total: item.valor, data_emissao: multipla.data_emissao, categoria_sugerida: item.categoria_sugerida, tipo_lancamento: item.tipo_lancamento, confianca: item.confianca },
           messageId, urlArquivo, categoriaId, "pago", new Date().toISOString().substring(0, 10)
         );
-        await sendTextMessage(chatId, `✅ *${item.descricao}* registrado como pago\n💰 R$ ${brl(item.valor)}\n🔑 Código: *${codigoCurto(lanc.id)}*`);
+        const rotulo = item.tipo_lancamento === "receita" ? "registrada" : "registrado como pago";
+        await sendTextMessage(chatId, `✅ *${item.descricao}* ${rotulo}\n💰 R$ ${brl(item.valor)}\n🔑 Código: *${codigoCurto(lanc.id)}*`);
         return;
       }
 

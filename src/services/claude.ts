@@ -171,6 +171,13 @@ Schema quando for documento financeiro:
 
 Regras:
 - Use "comprovante" para pagamentos já realizados. Use "boleto" para contas ainda a pagar.
+- tipo_lancamento: "despesa" quando o restaurante está PAGANDO (comprando insumos, embalagens,
+  equipamentos, serviços, mercadoria de fornecedor) — mesmo que o pagamento tenha sido via PIX ou
+  cartão. "receita" SÓ quando é dinheiro que o restaurante está RECEBENDO (venda pro cliente,
+  fechamento de caixa). PIX/cartão são só formas de pagamento e NÃO indicam direção do dinheiro —
+  olhe o CONTEXTO (quem comprou o quê de quem). Cupons de "conferência de produtos" ou notas com
+  colunas de PRODUTO/QTDE/PREÇO listando insumos, embalagens, sacos, potes etc. são SEMPRE despesa
+  (o restaurante comprando), mesmo que mencionem PIX como pagamento.
 - Agrupe TUDO da mesma categoria em UM único item com valor somado.
 - Ao agrupar vários produtos na mesma "descricao", separe cada um por vírgula e inclua a
   quantidade/unidade de CADA produto entre parênteses logo após o nome dele, lendo a coluna
