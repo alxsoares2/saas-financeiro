@@ -145,17 +145,25 @@ function codigoCurto(id: string): string {
   return id.replace(/-/g, "").substring(0, 6).toUpperCase();
 }
 
-// Separa por vírgula, mas ignora vírgulas DENTRO de parênteses — necessário
-// porque a quantidade vem no formato brasileiro "(6,070kg)", que usa vírgula
-// como separador decimal e não pode ser confundida com separador de produtos.
+// Separa por vírgula, mas ignora vírgulas que são DECIMAIS — necessário porque
+// medidas em formato brasileiro usam vírgula como separador decimal e não
+// podem ser confundidas com separador de produtos. Duas situações protegidas:
+//   1. Vírgula dentro de parênteses, ex: "Queijo (6,070kg)"
+//   2. Vírgula "nua" cercada de dígitos, ex: "Guaraná 1,5L" (tamanho no nome,
+//      sem parênteses — a IA nem sempre embala isso).
 function splitProdutos(descricao: string): string[] {
   const partes: string[] = [];
   let atual = "";
   let profundidade = 0;
-  for (const ch of descricao) {
+  for (let i = 0; i < descricao.length; i++) {
+    const ch = descricao[i];
     if (ch === "(") profundidade++;
     if (ch === ")") profundidade--;
-    if (ch === "," && profundidade === 0) {
+
+    const ehVirgulaDecimal =
+      ch === "," && /\d/.test(descricao[i - 1] ?? "") && /\d/.test(descricao[i + 1] ?? "");
+
+    if (ch === "," && profundidade === 0 && !ehVirgulaDecimal) {
       partes.push(atual.trim());
       atual = "";
     } else {
