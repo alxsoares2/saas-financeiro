@@ -249,6 +249,16 @@ export async function atualizarDataEmissao(id: string, dataEmissao: string): Pro
   return (count ?? 1) >= 0;
 }
 
+export async function atualizarDescricao(id: string, descricao: string): Promise<boolean> {
+  const { error, count } = await getClient()
+    .from("lancamentos")
+    .update({ descricao })
+    .eq("id", id);
+
+  if (error) throw new Error(`Erro ao atualizar descrição: ${error.message}`);
+  return (count ?? 1) >= 0;
+}
+
 export async function getLancamentoPorCodigo(codigo: string): Promise<Lancamento | null> {
   const prefix = codigo.toLowerCase();
   // ilike em coluna UUID não funciona direto — filtra nos últimos 200 e compara em JS

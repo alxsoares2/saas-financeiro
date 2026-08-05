@@ -18,6 +18,7 @@ import {
   getResumoMes,
   buscarPendentesCorrespondentes,
   atualizarDataEmissao,
+  atualizarDescricao,
   excluirLancamento,
   getLancamentosRecentes,
   atualizarCategoria,
@@ -1107,6 +1108,55 @@ async function handleData(chatId: string, msg: string): Promise<void> {
   );
 }
 
+async function handleCorrigirItem(chatId: string, msg: string): Promise<void> {
+  // Formato: corrigir ABC123 2 Refrigerante Antarctica Guaraná 1,5L
+  const match = msg.match(/^corrigir\s+([A-Za-z0-9]{4,8})\s+(\d+)\s+(.+)$/i);
+  if (!match) {
+    await sendTextMessage(
+      chatId,
+      "Formato: *corrigir [código] [número] [texto certo]*\nExemplo: *corrigir ABC123 2 Refrigerante Guaraná 1,5L*\n\n_O número é o da lista que apareceu quando o lançamento foi criado._"
+    );
+    return;
+  }
+
+  const [, codigoRaw, numeroStr, textoNovo] = match;
+  const codigo = codigoRaw.toUpperCase();
+  const numero = parseInt(numeroStr, 10);
+
+  const lancamento = await getLancamentoPorCodigo(codigo.toLowerCase());
+  if (!lancamento) {
+    await sendTextMessage(chatId, `Lançamento *${codigo}* não encontrado. Use *recentes* pra ver os códigos.`);
+    return;
+  }
+
+  const produtos = splitProdutos(lancamento.descricao);
+
+  if (numero < 1 || numero > produtos.length) {
+    await sendTextMessage(
+      chatId,
+      produtos.length > 1
+        ? `O lançamento *${codigo}* tem ${produtos.length} itens. Escolha um número de 1 a ${produtos.length}.`
+        : `O lançamento *${codigo}* tem só 1 item — use *corrigir ${codigo} 1 ${textoNovo}*.`
+    );
+    return;
+  }
+
+  produtos[numero - 1] = textoNovo.trim();
+  const novaDescricao = produtos.join(", ");
+
+  await atualizarDescricao(lancamento.id, novaDescricao);
+
+  const listaAtualizada =
+    produtos.length > 1
+      ? produtos.map((p, i) => `     ${i === numero - 1 ? "✏️" : `${i + 1}.`} ${p}`).join("\n")
+      : `  ${novaDescricao}`;
+
+  await sendTextMessage(
+    chatId,
+    `✅ Item ${numero} corrigido!\n📋 *${codigo}*\n${listaAtualizada}`
+  );
+}
+
 async function handleConfirmarCombinacao(chatId: string, msg: string): Promise<void> {
   const match = msg.match(/^confirmar\s+(COMB[A-Z0-9]+)/i);
   if (!match) {
@@ -1547,6 +1597,11 @@ async function handleComando(chatId: string, msg: string): Promise<boolean> {
     return true;
   }
 
+  if (/^corrigir\b/i.test(trimmed)) {
+    await handleCorrigirItem(chatId, trimmed);
+    return true;
+  }
+
   if (/^excluir\b/i.test(trimmed)) {
     await handleExcluir(chatId, trimmed);
     return true;
@@ -1625,6 +1680,7 @@ async function handleComando(chatId: string, msg: string): Promise<boolean> {
       "• *excluir ABC123* — remove lançamento errado",
       "• *data ABC123 29/07/2026* — corrige data de emissão",
       "• *categoria ABC123 Salários CLT* — muda categoria de um lançamento",
+      "• *corrigir ABC123 2 Guaraná 1,5L* — corrige só o item 2 da lista de um lançamento com vários produtos",
       "_Use *recentes* para ver os códigos dos últimos lançamentos_",
       "",
       "*7. Despesas Recorrentes (aluguel, salários, etc)*",
