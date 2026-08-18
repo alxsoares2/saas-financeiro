@@ -691,16 +691,42 @@ export function montarItensAgrupados(
   });
 }
 
+// Rede de segurança determinística: mesmo com a regra explícita no prompt,
+// a IA às vezes ainda transcreve "DESCONTO" como se fosse um produto
+// próprio (já aconteceu), em vez de preencher o campo "desconto" do produto
+// anterior. Em código — sem depender da IA acertar de novo — remove essa
+// linha fantasma e soma o valor dela como desconto do produto anterior.
+export function corrigirLinhasDesconto(linhas: LinhaCupom[]): LinhaCupom[] {
+  const corrigidas: LinhaCupom[] = [];
+  for (const linha of linhas) {
+    const ehLinhaDesconto = /^desconto\b/i.test((linha.descricao || "").trim());
+    if (ehLinhaDesconto) {
+      const anterior = corrigidas[corrigidas.length - 1];
+      if (anterior) {
+        anterior.desconto = Math.round(((anterior.desconto || 0) + Math.abs(linha.valor_item || 0)) * 100) / 100;
+        console.warn(`[Claude] Linha "DESCONTO" fantasma corrigida: aplicada em "${anterior.descricao}"`);
+      } else {
+        console.warn(`[Claude] Linha "DESCONTO" sem produto anterior pra aplicar — descartada`);
+      }
+      continue; // nunca vira produto próprio, com ou sem produto anterior pra aplicar
+    }
+    corrigidas.push(linha);
+  }
+  return corrigidas;
+}
+
 export async function extractMultiFromImageV2(
   imageBuffer: Buffer,
   mimeType: "image/jpeg" | "image/png" | "image/webp" | "image/gif",
   caption?: string
 ): Promise<ExtracaoMultipla | null> {
-  const transcricao = await transcreverCupom(imageBuffer, mimeType, caption);
-  if (!transcricao || !transcricao.linhas || transcricao.linhas.length === 0) {
+  const transcricaoBruta = await transcreverCupom(imageBuffer, mimeType, caption);
+  if (!transcricaoBruta || !transcricaoBruta.linhas || transcricaoBruta.linhas.length === 0) {
     console.warn("[Claude] Transcrição vazia/falhou, caindo pro pipeline antigo (uma chamada só)");
     return extractMultiFromImage(imageBuffer, mimeType, caption);
   }
+
+  const transcricao = { ...transcricaoBruta, linhas: corrigirLinhasDesconto(transcricaoBruta.linhas) };
 
   const somaLinhas = transcricao.linhas.reduce((s, l) => s + (l.valor_item - (l.desconto || 0)), 0);
   if (transcricao.valor_total_documento != null) {
