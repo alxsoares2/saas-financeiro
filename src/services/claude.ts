@@ -185,7 +185,14 @@ Regras:
   olhe o CONTEXTO (quem comprou o quê de quem). Cupons de "conferência de produtos" ou notas com
   colunas de PRODUTO/QTDE/PREÇO listando insumos, embalagens, sacos, potes etc. são SEMPRE despesa
   (o restaurante comprando), mesmo que mencionem PIX como pagamento.
-- Agrupe TUDO da mesma categoria em UM único item com valor somado.
+- Classifique CADA produto individualmente na categoria certa ANTES de agrupar. Só depois
+  disso, agrupe em um único item os produtos que ficaram com a MESMA categoria — NUNCA agrupe
+  produtos de categorias diferentes só porque vieram na mesma nota. Uma nota de supermercado
+  normalmente gera VÁRIOS itens (um por categoria), não um só. Exemplo do que NÃO fazer: numa
+  nota com alface, coca-cola, ovos, queijo e presunto, NÃO coloque tudo em "Frutas, legumes e
+  verduras FLV" — alface/manjericão/pimentão vão em FLV, coca-cola vai em "Bebidas Não
+  alcoólicas", queijo/presunto vão em "Latícinios", e assim por diante, cada grupo com seu
+  próprio item na lista "itens".
 - Ao agrupar vários produtos na mesma "descricao", separe cada um por vírgula e inclua a
   quantidade/unidade de CADA produto entre parênteses logo após o nome dele, lendo a coluna
   de quantidade do documento. Ex: "Queijo Mussarela Fat KG (1,076kg), Leite UHT CX 1L (2un)".
