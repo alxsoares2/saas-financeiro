@@ -921,6 +921,20 @@ export async function atualizarValorLancamento(id: string, valor: number): Promi
   return (count ?? 0) > 0;
 }
 
+// Ajusta o valor de um lançamento JÁ REGISTRADO (pago ou pendente), sem
+// mexer no status — diferente de atualizarValorLancamento (que é só pro
+// fluxo de "valor a confirmar" e sempre força status "pendente"). Usado
+// pra corrigir um valor que a IA leu errado, mesmo em lançamento já pago.
+export async function ajustarValorLancamento(id: string, valor: number): Promise<boolean> {
+  const { error, count } = await getClient()
+    .from("lancamentos")
+    .update({ valor })
+    .eq("id", id);
+
+  if (error) throw new Error(`Erro ao ajustar valor: ${error.message}`);
+  return (count ?? 0) > 0;
+}
+
 // ── Alertas ──────────────────────────────────────────────────────────────
 
 interface AlertaConfig {

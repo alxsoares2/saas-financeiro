@@ -39,6 +39,7 @@ import {
   resumirRecorrente,
   excluirRecorrente,
   atualizarValorLancamento,
+  ajustarValorLancamento,
   getLancamentosAConfirmar,
   listarAlertasConfig,
   atualizarMetaCMV,
@@ -993,6 +994,45 @@ async function handleValor(chatId: string, msg: string): Promise<void> {
   }
 }
 
+async function handleAjustarValor(chatId: string, msg: string): Promise<void> {
+  // Formato: ajustar [código] [valor] — corrige o valor de um lançamento
+  // JÁ REGISTRADO (pago ou pendente), sem mexer no status. Diferente de
+  // "valor", que é só pro fluxo de "valor a confirmar".
+  const match = msg.match(/^ajustar\s+([A-Za-z0-9]{4,8})\s+([\d.]+)$/i);
+  if (!match) {
+    await sendTextMessage(
+      chatId,
+      "Formato: *ajustar [código] [valor certo]*\n\nExemplo: *ajustar ABC123 35.22*\n\n_Use pra corrigir um valor que a IA leu errado num lançamento já registrado._"
+    );
+    return;
+  }
+
+  const codigo = match[1].toUpperCase();
+  const valorStr = match[2];
+  const valor = Number(valorStr);
+
+  if (isNaN(valor) || valor <= 0) {
+    await sendTextMessage(chatId, `❌ Valor deve ser um número positivo. Você informou: ${valorStr}`);
+    return;
+  }
+
+  const lancamento = await getLancamentoPorCodigo(codigo.toLowerCase());
+  if (!lancamento) {
+    await sendTextMessage(chatId, `Lançamento *${codigo}* não encontrado. Verifique o código.`);
+    return;
+  }
+
+  try {
+    await ajustarValorLancamento(lancamento.id, valor);
+    await sendTextMessage(
+      chatId,
+      `✅ *Valor ajustado!*\n${lancamento.descricao}\nDe: R$ ${brl(Number(lancamento.valor))}\nPara: R$ ${brl(valor)}`
+    );
+  } catch (e: any) {
+    await sendTextMessage(chatId, `❌ Erro ao ajustar: ${e.message}`);
+  }
+}
+
 // ── Handler de Alerta CMV ─────────────────────────────────────────────────
 
 async function handleAlertaCMV(chatId: string, msg: string): Promise<void> {
@@ -1644,6 +1684,11 @@ async function handleComando(chatId: string, msg: string): Promise<boolean> {
     return true;
   }
 
+  if (/^ajustar\b/i.test(trimmed)) {
+    await handleAjustarValor(chatId, trimmed);
+    return true;
+  }
+
   if (/^alerta\s+cmv\b/i.test(trimmed)) {
     await handleAlertaCMV(chatId, trimmed);
     return true;
@@ -1750,6 +1795,7 @@ async function handleComando(chatId: string, msg: string): Promise<boolean> {
       "• *data ABC123 29/07/2026* — corrige data de emissão",
       "• *categoria ABC123 Salários CLT* — muda categoria de um lançamento",
       "• *corrigir ABC123 2 Guaraná 1,5L* — corrige só o item 2 da lista de um lançamento com vários produtos",
+      "• *ajustar ABC123 35.22* — corrige o valor de um lançamento já registrado (pago ou não), sem mexer no status",
       "_Use *recentes* para ver os códigos dos últimos lançamentos_",
       "",
       "*7. Despesas Recorrentes (aluguel, salários, etc)*",
