@@ -90,6 +90,36 @@ export async function findOrCreateCategoria(
   return data as Categoria;
 }
 
+// A IA às vezes devolve a data em DD/MM/AAAA (ou erra o formato de outro jeito)
+// mesmo o prompt pedindo ISO — sem essa normalização, o Postgres rejeita a
+// inserção inteira (ex: "18/08/2026" vira mês 18, "date/time field value out
+// of range") e o lançamento nem chega a ser criado. Aqui a gente aceita ISO
+// direto, converte BR pra ISO, tenta inverter dia/mês se só uma ordem for
+// válida, e cai pra null (em vez de derrubar o insert) se não der pra confiar.
+function normalizarDataISO(data?: string | null): string | null {
+  if (!data) return null;
+  const s = String(data).trim();
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+
+  const brMatch = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (brMatch) {
+    const [, dia, mes, ano] = brMatch;
+    const diaN = Number(dia);
+    const mesN = Number(mes);
+    if (mesN >= 1 && mesN <= 12 && diaN >= 1 && diaN <= 31) {
+      return `${ano}-${mes}-${dia}`;
+    }
+    if (diaN >= 1 && diaN <= 12 && mesN >= 1 && mesN <= 31) {
+      return `${ano}-${dia}-${mes}`;
+    }
+    return null;
+  }
+
+  console.warn(`[normalizarDataISO] Formato de data não reconhecido, ignorando: "${data}"`);
+  return null;
+}
+
 export async function createLancamento(
   extracted: ExtractedDocument,
   messageId: string,
@@ -107,11 +137,11 @@ export async function createLancamento(
       fornecedor: extracted.fornecedor,
       cnpj_cpf: extracted.cnpj_cpf,
       valor: extracted.valor_total,
-      data_emissao: extracted.data_emissao ?? null,
-      data_vencimento: extracted.data_vencimento ?? null,
+      data_emissao: normalizarDataISO(extracted.data_emissao),
+      data_vencimento: normalizarDataISO(extracted.data_vencimento),
       categoria_id: categoriaId ?? null,
       status,
-      data_pagamento: dataPagamento ?? null,
+      data_pagamento: normalizarDataISO(dataPagamento),
       url_arquivo: urlArquivo ?? null,
       dados_brutos: extracted,
     })
