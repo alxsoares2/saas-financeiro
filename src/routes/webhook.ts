@@ -1785,6 +1785,7 @@ router.post("/zapi", async (req: Request, res: Response) => {
       await sendTextMessage(chatId, "⏳ Analisando documento...");
     }
 
+    try {
     // Extrai dados financeiros do documento ou texto livre
     const resultado = await processar(payload);
     if (!resultado) return;
@@ -1885,6 +1886,16 @@ router.post("/zapi", async (req: Request, res: Response) => {
     ].filter(Boolean).join("\n");
 
     await sendTextMessage(chatId, confirmacao);
+    } catch (err) {
+      // Qualquer erro na leitura/registro do documento (IA, banco, categoria etc.)
+      // cai aqui — antes disso, uma falha nesse trecho deixava o usuário travado
+      // no "⏳ Analisando documento..." pra sempre, sem nenhuma resposta.
+      console.error("[Webhook] Erro ao processar documento:", err);
+      const detalhe = err instanceof Error ? err.message : String(err);
+      await sendTextMessage(chatId, `❌ Não consegui processar o documento: ${detalhe}`).catch((e) =>
+        console.error("[Webhook] Falha ao notificar erro de documento:", e)
+      );
+    }
   } catch (err) {
     console.error("[Webhook] Erro não tratado:", err);
   }
