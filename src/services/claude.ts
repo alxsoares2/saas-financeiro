@@ -471,6 +471,15 @@ Regras:
   linhas, não 1).
 - Não invente produtos que não existem no documento. Não duplique um produto que só aparece
   uma vez.
+- ⚠️ CONTAGEM: antes de responder, conte de novo quantas linhas de produto existem no
+  documento (cada código/número de item é UMA linha) e confira que sua lista "linhas" tem
+  exatamente essa quantidade. É comum errar a contagem quando vários produtos parecidos se
+  repetem em sequência (ex: 3x "Alface Americana", 2x "Manjericão") — trate CADA número de
+  item/código da nota como uma linha própria, mesmo que o produto seja idêntico ao anterior.
+- ⚠️ LINHA DE DESCONTO NÃO SUBSTITUI O PRODUTO: quando um produto é seguido de uma linha
+  "DESCONTO", isso NÃO significa que o produto virou outra coisa — o produto AINDA é uma linha
+  normal em "linhas" (com seu valor_item cheio), e o desconto só entra no campo "desconto"
+  DESSE MESMO produto. Nunca pule a transcrição de um produto só porque ele tem desconto.
 - "valor_item" é o VALOR DO ITEM já multiplicado pela quantidade — ANTES de qualquer desconto.
   Cupons fiscais (NFC-e) costumam ter 3 números por linha de produto: quantidade, valor
   UNITÁRIO (R$ por kg/un/litro) e valor do ITEM (o já calculado). Use SEMPRE o valor do ITEM,
