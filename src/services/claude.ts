@@ -39,6 +39,7 @@ Schema obrigatório:
   "data_emissao": "YYYY-MM-DD" | null,
   "data_vencimento": "YYYY-MM-DD" | null,
   "categoria_sugerida": string | null,
+  "subcategoria": string | null,
   "tipo_lancamento": "receita" | "despesa",
   "confianca": "alta" | "media" | "baixa"
 }
@@ -50,6 +51,11 @@ Regras:
 - tipo_lancamento: "despesa" para compras/boletos/NF de fornecedor; "receita" para fechamento de caixa/comprovante de venda
 - confianca: "alta" se dados claramente visíveis; "media" se há ambiguidade; "baixa" se ilegível ou incompleto
 - categoria_sugerida: OBRIGATÓRIA — NUNCA null. Use EXATAMENTE uma das categorias abaixo, sempre a mais próxima. Queijo/leite/manteiga → "Latícinios"; gasolina → "Despesas com veículos (comb., manut., IPVA, outros)". Na dúvida, escolha a mais próxima — nunca deixe em branco.
+- subcategoria: normalmente null. Preencha SÓ quando o item comprado for um destes 5 produtos
+  rastreados (o cliente acompanha eles individualmente): "Filé de Peito" (categoria_sugerida =
+  "Aves"), "Filé Mignon" (categoria_sugerida = "Bovinos"), "Queijo Mussarela" (categoria_sugerida =
+  "Latícinios"), "Camarão" (categoria_sugerida = "Frutos do Mar"), "Óleo" (categoria_sugerida =
+  "Óleos/Azeites/Gordura"). Use exatamente esses nomes de subcategoria.
 
 Categorias de DESPESA disponíveis (use o nome EXATO):
   CMV: "Bovinos", "Suínos", "Ovinos", "Aves", "Ovos", "Frutos do Mar", "Frutas, legumes e verduras FLV", "Doces industrializados", "Latícinios", "Congelados", "Grãos/Cereais/Farinha", "Óleos/Azeites/Gordura", "Café", "Conservas", "Condimentos/Temperos/Molhos", "Embalagens e Descartáveis", "Etiquetas"
@@ -171,6 +177,7 @@ Schema quando for documento financeiro:
       "unidade": string | null,
       "tipo_lancamento": "receita" | "despesa",
       "categoria_sugerida": string | null,
+      "subcategoria": string | null,
       "confianca": "alta" | "media" | "baixa"
     }
   ]
@@ -197,6 +204,17 @@ Regras:
   quantidade/unidade de CADA produto entre parênteses logo após o nome dele, lendo a coluna
   de quantidade do documento. Ex: "Queijo Mussarela Fat KG (1,076kg), Leite UHT CX 1L (2un)".
   Se não conseguir ler a quantidade de um produto específico, omita os parênteses só dele.
+- ⛔ EXCEÇÃO AO AGRUPAMENTO — produtos rastreados individualmente: se um produto da nota for um
+  destes 5, ele NUNCA entra no grupo/descrição de outros produtos — vira SEMPRE seu próprio item
+  separado na lista "itens", com "quantidade"/"unidade" exatos dele (não somados com mais nada):
+    • "Filé de Peito"    → categoria_sugerida "Aves",                    subcategoria "Filé de Peito"
+    • "Filé Mignon"      → categoria_sugerida "Bovinos",                 subcategoria "Filé Mignon"
+    • "Queijo Mussarela" → categoria_sugerida "Latícinios",              subcategoria "Queijo Mussarela"
+    • "Camarão"          → categoria_sugerida "Frutos do Mar",           subcategoria "Camarão"
+    • "Óleo"             → categoria_sugerida "Óleos/Azeites/Gordura",   subcategoria "Óleo"
+  Todo o resto da mesma categoria continua agrupado normalmente entre si (ex: coxa e asa de
+  frango seguem juntas em "Aves", só o Filé de Peito sai pra linha própria). Para qualquer item
+  que NÃO seja um desses 5, subcategoria fica null.
 - valor sempre número sem formatação (ex: 1500.90)
 - Atenção ao formato de data: DD/MM/AAAA (Ex: 01/08/2026 = 1º de agosto)
 

@@ -43,6 +43,7 @@ import {
   listarAlertasConfig,
   atualizarMetaCMV,
   registrarHistoricoCompra,
+  getComprasRastreadas,
   enterTenant,
 } from "../db/supabase.js";
 import { findTenantByChat } from "../config/tenants.js";
@@ -289,6 +290,7 @@ async function registrarMultipla(
         data_emissao: multipla.data_emissao,
         data_vencimento: multipla.data_vencimento,
         categoria_sugerida: item.categoria_sugerida,
+        subcategoria: item.subcategoria,
         tipo_lancamento: item.tipo_lancamento,
         confianca: item.confianca,
       },
@@ -468,6 +470,66 @@ async function handleCMV(chatId: string, msg: string): Promise<void> {
   ];
 
   await sendTextMessage(chatId, linhas.join("\n"));
+}
+
+async function handleRastreados(chatId: string, msg: string): Promise<void> {
+  const semPrefixo = msg.replace(/^rastreados\s*/i, "").trim();
+  const periodo = semPrefixo ? parsePeriodoDRE(`dre ${semPrefixo}`) : mesAtual();
+
+  if (!periodo) {
+    await sendTextMessage(chatId, "Formato inválido. Use: *rastreados* ou *rastreados julho*");
+    return;
+  }
+
+  const [dre, rastreados] = await Promise.all([
+    calcularDRE(periodo.inicio, periodo.fim),
+    getComprasRastreadas(periodo.inicio, periodo.fim),
+  ]);
+
+  if (rastreados.length === 0) {
+    await sendTextMessage(
+      chatId,
+      `*ITENS RASTREADOS — ${periodo.label}*\n\nNenhuma compra de item rastreado (Filé de Peito, Filé Mignon, Queijo Mussarela, Camarão, Óleo) nesse período.`
+    );
+    return;
+  }
+
+  // Todas as linhas de despesa do DRE, pra achar o total da categoria pai de cada subcategoria
+  const todasLinhas = [
+    ...dre.cmv,
+    ...dre.materiais_venda_direta,
+    ...dre.materiais_apoio,
+    ...dre.cmo_eventual,
+    ...dre.tarifas_cartao,
+    ...dre.impostos_variaveis,
+  ];
+
+  const porCategoria = new Map<string, typeof rastreados>();
+  for (const r of rastreados) {
+    const lista = porCategoria.get(r.categoria_nome) ?? [];
+    lista.push(r);
+    porCategoria.set(r.categoria_nome, lista);
+  }
+
+  const blocos = Array.from(porCategoria.entries()).map(([categoriaNome, itens]) => {
+    const totalCategoria = todasLinhas.find((l) => l.categoria === categoriaNome)?.valor ?? 0;
+    const linhasItens = itens
+      .map((it) => {
+        const qtd = it.quantidade_total > 0 ? ` (${it.quantidade_total}${it.unidade})` : "";
+        return `   • ${it.subcategoria}: R$ ${brl(it.valor_total)}${qtd}`;
+      })
+      .join("\n");
+
+    return `🏷️ *${categoriaNome}* — Total categoria: R$ ${brl(totalCategoria)}\n${linhasItens}`;
+  });
+
+  const texto = [
+    `*ITENS RASTREADOS — ${periodo.label}*`,
+    "",
+    blocos.join("\n\n"),
+  ].join("\n");
+
+  await sendTextMessage(chatId, texto);
 }
 
 async function handleAnalise(chatId: string, msg: string): Promise<void> {
@@ -1517,6 +1579,11 @@ async function handleComando(chatId: string, msg: string): Promise<boolean> {
     return true;
   }
 
+  if (/^rastreados\b/i.test(trimmed)) {
+    await handleRastreados(chatId, trimmed);
+    return true;
+  }
+
   if (/^analise\b/i.test(trimmed)) {
     await handleAnalise(chatId, trimmed);
     return true;
@@ -1670,6 +1737,8 @@ async function handleComando(chatId: string, msg: string): Promise<boolean> {
       "• *recentes* — últimos 8 lançamentos com códigos",
       "• *cmv* — custos variáveis com percentual",
       "• *cmv julho* — CMV de mês específico",
+      "• *rastreados* — compras de itens rastreados (Filé de Peito, Filé Mignon, Queijo Mussarela, Camarão, Óleo) vs total da categoria",
+      "• *rastreados julho* — rastreados de mês específico",
       "• *dre* — resultado operacional completo",
       "• *dre pdf* — relatório PDF com comparativo",
       "• *dre julho* — resultado de mês específico",
@@ -1819,7 +1888,7 @@ router.post("/zapi", async (req: Request, res: Response) => {
 
         // Receita, ou despesa sem match — registra direto.
         const lanc = await createLancamento(
-          { tipo_documento: "comprovante", fornecedor: multipla.fornecedor, cnpj_cpf: multipla.cnpj_cpf, descricao: item.descricao, valor_total: item.valor, data_emissao: multipla.data_emissao, categoria_sugerida: item.categoria_sugerida, tipo_lancamento: item.tipo_lancamento, confianca: item.confianca },
+          { tipo_documento: "comprovante", fornecedor: multipla.fornecedor, cnpj_cpf: multipla.cnpj_cpf, descricao: item.descricao, valor_total: item.valor, data_emissao: multipla.data_emissao, categoria_sugerida: item.categoria_sugerida, subcategoria: item.subcategoria, tipo_lancamento: item.tipo_lancamento, confianca: item.confianca },
           messageId, urlArquivo, categoriaId, "pago", new Date().toISOString().substring(0, 10)
         );
         const rotulo = item.tipo_lancamento === "receita" ? "registrada" : "registrado como pago";

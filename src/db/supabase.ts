@@ -140,6 +140,7 @@ export async function createLancamento(
       data_emissao: normalizarDataISO(extracted.data_emissao),
       data_vencimento: normalizarDataISO(extracted.data_vencimento),
       categoria_id: categoriaId ?? null,
+      subcategoria: extracted.subcategoria ?? null,
       status,
       data_pagamento: normalizarDataISO(dataPagamento),
       url_arquivo: urlArquivo ?? null,
@@ -152,11 +153,71 @@ export async function createLancamento(
   return data as Lancamento;
 }
 
-async function getCategoriaMap(): Promise<Map<string, { nome: string; grupo_dre: string }>> {
+export async function getCategoriaMap(): Promise<Map<string, { nome: string; grupo_dre: string }>> {
   const { data } = await getClient().from("categorias").select("id, nome, grupo_dre");
   const map = new Map<string, { nome: string; grupo_dre: string }>();
   for (const c of data ?? []) map.set(c.id, { nome: c.nome, grupo_dre: c.grupo_dre });
   return map;
+}
+
+// ── Itens rastreados (subcategoria) ─────────────────────────────────────────
+
+export interface CompraRastreada {
+  subcategoria: string;
+  categoria_nome: string;
+  valor_total: number;
+  quantidade_total: number;
+  unidade: string;
+}
+
+export async function getComprasRastreadas(
+  inicio: string,
+  fim: string
+): Promise<CompraRastreada[]> {
+  const { data: lancs, error } = await getClient()
+    .from("lancamentos")
+    .select("id, valor, categoria_id, subcategoria")
+    .not("subcategoria", "is", null)
+    .gte("data_emissao", inicio)
+    .lte("data_emissao", fim);
+
+  if (error) throw new Error(`Erro ao buscar itens rastreados: ${error.message}`);
+  if (!lancs || lancs.length === 0) return [];
+
+  const ids = lancs.map((l: any) => l.id);
+  const { data: historico, error: histError } = await getClient()
+    .from("historico_compras")
+    .select("lancamento_id, quantidade, unidade")
+    .in("lancamento_id", ids);
+
+  if (histError) throw new Error(`Erro ao buscar histórico de compras: ${histError.message}`);
+
+  const histMap = new Map<string, { quantidade: number; unidade: string }>(
+    (historico ?? []).map((h: any) => [h.lancamento_id, { quantidade: Number(h.quantidade), unidade: h.unidade }])
+  );
+  const cats = await getCategoriaMap();
+
+  const agrupado = new Map<string, CompraRastreada>();
+
+  for (const l of lancs) {
+    const h = histMap.get(l.id);
+    const unidade = h?.unidade ?? "";
+    const catNome = cats.get(l.categoria_id)?.nome ?? "Sem categoria";
+    const chave = `${l.subcategoria}::${unidade}`;
+
+    const atual = agrupado.get(chave) ?? {
+      subcategoria: l.subcategoria,
+      categoria_nome: catNome,
+      valor_total: 0,
+      quantidade_total: 0,
+      unidade,
+    };
+    atual.valor_total += Number(l.valor);
+    atual.quantidade_total += h?.quantidade ?? 0;
+    agrupado.set(chave, atual);
+  }
+
+  return Array.from(agrupado.values());
 }
 
 export async function getLancamentos(

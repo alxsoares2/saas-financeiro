@@ -44,6 +44,10 @@ export interface ExtractedDocument {
   data_emissao?: string; // ISO YYYY-MM-DD
   data_vencimento?: string;
   categoria_sugerida?: string;
+  // Produto específico dentro da categoria que o cliente quer rastrear
+  // individualmente (ex: "Filé de Peito" dentro de "Aves"). Null pra tudo
+  // que não é um dos itens rastreados.
+  subcategoria?: string | null;
   tipo_lancamento: "receita" | "despesa";
   confianca: "alta" | "media" | "baixa";
 }
@@ -61,6 +65,7 @@ export interface Lancamento {
   data_vencimento?: string;
   data_pagamento?: string;
   categoria_id?: string;
+  subcategoria?: string | null;
   status: "pendente" | "pago";
   url_arquivo?: string;
   dados_brutos?: object;
@@ -107,6 +112,7 @@ export interface ItemExtraido {
   quantidade?: number;  // ex: 10 (kg, unidades, litros)
   unidade?: string;     // ex: "kg", "un", "l"
   categoria_sugerida?: string;
+  subcategoria?: string | null;
   tipo_lancamento: "receita" | "despesa";
   confianca: "alta" | "media" | "baixa";
 }
