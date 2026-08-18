@@ -52,7 +52,7 @@ Regras:
 - categoria_sugerida: OBRIGATÓRIA — NUNCA null. Use EXATAMENTE uma das categorias abaixo, sempre a mais próxima. Queijo/leite/manteiga → "Latícinios"; gasolina → "Despesas com veículos (comb., manut., IPVA, outros)". Na dúvida, escolha a mais próxima — nunca deixe em branco.
 
 Categorias de DESPESA disponíveis (use o nome EXATO):
-  CMV: "Bovinos", "Suínos", "Ovinos", "Aves", "Frutos do Mar", "Frutas, legumes e verduras FLV", "Doces industrializados", "Latícinios", "Congelados", "Grãos/Cereais/Farinha", "Óleos/Azeites/Gordura", "Café", "Conservas", "Condimentos/Temperos/Molhos", "Embalagens e Descartáveis", "Etiquetas"
+  CMV: "Bovinos", "Suínos", "Ovinos", "Aves", "Ovos", "Frutos do Mar", "Frutas, legumes e verduras FLV", "Doces industrializados", "Latícinios", "Congelados", "Grãos/Cereais/Farinha", "Óleos/Azeites/Gordura", "Café", "Conservas", "Condimentos/Temperos/Molhos", "Embalagens e Descartáveis", "Etiquetas"
   Bebidas: "Cervejas", "Destilados", "Vinhos", "Bebidas Não alcoólicas"
   Apoio: "Material de limpeza e higiene"
   Mão de obra eventual: "Mão de Obra Eventual / Freelancer"
@@ -202,6 +202,10 @@ Regras:
 
 ⛔ REGRA CRÍTICA — categoria_sugerida é OBRIGATÓRIA. NUNCA devolva null.
 Use EXATAMENTE uma categoria da lista abaixo. Sem exceções, sem criatividade.
+Não saber qual categoria usar NUNCA muda o tipo_lancamento — se é claramente o restaurante
+comprando algo (mesmo sem achar a categoria perfeita), continua sendo "despesa" e você escolhe a
+categoria de despesa mais próxima da lista. Nunca "resolva" a incerteza de categoria jogando o
+item pra uma categoria de receita.
 
 MAPEAMENTO DE CATEGORIAS REAIS DO CLIENTE:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -211,7 +215,7 @@ RECEITAS:
   "Vendas - iFood", "Vendas - Vale Refeição", "Serviços - Eventos", "Outras Receitas"
 
 CMV (Custo da Mercadoria Vendida):
-  "Bovinos", "Suínos", "Ovinos", "Aves", "Frutos do Mar", "Frutas, legumes e verduras FLV",
+  "Bovinos", "Suínos", "Ovinos", "Aves", "Ovos", "Frutos do Mar", "Frutas, legumes e verduras FLV",
   "Doces industrializados", "Latícinios", "Congelados", "Grãos/Cereais/Farinha", "Óleos/Azeites/Gordura",
   "Café", "Conservas", "Condimentos/Temperos/Molhos", "Embalagens e Descartáveis", "Etiquetas"
 
