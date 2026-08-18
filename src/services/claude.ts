@@ -224,10 +224,19 @@ Regras:
   "PIMENTAO AMARELO kg  0,225KG  27,90  6,28" → o item custou 6,28 (0,225kg × 27,90/kg), NÃO
   27,90. Se só existir um número na linha, aí sim use ele.
 - Preste atenção em linhas de "DESCONTO" logo abaixo de um produto — o desconto se aplica
-  àquele item específico; subtraia do valor dele antes de somar. No fim, a SOMA de todos os
-  "valor" dos itens deve bater com o total do documento (Total/Valor a Pagar) — se não bater,
-  revise se pegou valor unitário em vez de valor do item em algum produto pesado, ou se
-  esqueceu algum desconto.
+  SÓ àquele produto específico (o imediatamente acima dele na nota), nunca a outro item.
+  Subtraia do valor daquele produto antes de somar. NÃO aplique esse desconto em nenhum
+  outro produto da nota.
+- NÃO PULE nenhuma linha de produto do cupom — cada código/linha de produto é um item real que
+  foi comprado e tem que aparecer na descrição de algum grupo. Antes de finalizar, confira que
+  todo produto listado no cupom está representado em algum item da lista "itens".
+- Quando agrupar vários produtos num único item (mesma categoria), o "valor" desse item tem que
+  ser EXATAMENTE a soma dos valores dos produtos que você listou na "descricao" dele — não
+  arredonde, não estime, calcule a soma de verdade dos produtos que estão naquela descrição.
+- No fim, a SOMA de todos os "valor" dos itens deve bater com o total do documento (Total/Valor
+  a Pagar) — se não bater, revise: (1) se pegou valor unitário em vez de valor do item em algum
+  produto pesado, (2) se aplicou algum desconto no produto errado, (3) se esqueceu de incluir
+  algum produto do cupom, (4) se a soma de um grupo bate com os produtos listados nele.
 - Atenção ao formato de data: DD/MM/AAAA (Ex: 01/08/2026 = 1º de agosto)
 
 ⛔ REGRA CRÍTICA — categoria_sugerida é OBRIGATÓRIA. NUNCA devolva null.
