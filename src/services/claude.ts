@@ -662,7 +662,10 @@ export function montarItensAgrupados(
       valor: 0,
     };
 
-    atual.produtos.push({ descricao: linha.descricao, quantidade: linha.quantidade, unidade: linha.unidade });
+    // Defesa contra a IA omitir o campo "descricao" numa linha (já aconteceu:
+    // virava a string literal "undefined" no texto final sem essa checagem).
+    const descricaoLinha = linha.descricao && linha.descricao.trim() ? linha.descricao.trim() : "Produto não identificado";
+    atual.produtos.push({ descricao: descricaoLinha, quantidade: linha.quantidade, unidade: linha.unidade });
     atual.valor = Math.round((atual.valor + valorFinal) * 100) / 100;
     grupos.set(chave, atual);
   });
