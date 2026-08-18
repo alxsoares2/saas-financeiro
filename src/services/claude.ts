@@ -216,6 +216,18 @@ Regras:
   frango seguem juntas em "Aves", só o Filé de Peito sai pra linha própria). Para qualquer item
   que NÃO seja um desses 5, subcategoria fica null.
 - valor sempre número sem formatação (ex: 1500.90)
+- ⚠️ CUPONS FISCAIS (NFC-e) têm normalmente 3 números por linha de produto: QTD/UN, VALOR
+  UNITÁRIO (R$ por kg/un/litro) e VALOR DO ITEM (o já multiplicado pela quantidade — é esse
+  último que é o valor REALMENTE pago por aquele item). Use SEMPRE o VALOR DO ITEM como "valor",
+  NUNCA o valor unitário. Isso é CRÍTICO em produtos pesados (kg): o preço por kg pode ser bem
+  maior que o valor pago, porque a quantidade comprada não é 1kg inteiro. Ex: linha
+  "PIMENTAO AMARELO kg  0,225KG  27,90  6,28" → o item custou 6,28 (0,225kg × 27,90/kg), NÃO
+  27,90. Se só existir um número na linha, aí sim use ele.
+- Preste atenção em linhas de "DESCONTO" logo abaixo de um produto — o desconto se aplica
+  àquele item específico; subtraia do valor dele antes de somar. No fim, a SOMA de todos os
+  "valor" dos itens deve bater com o total do documento (Total/Valor a Pagar) — se não bater,
+  revise se pegou valor unitário em vez de valor do item em algum produto pesado, ou se
+  esqueceu algum desconto.
 - Atenção ao formato de data: DD/MM/AAAA (Ex: 01/08/2026 = 1º de agosto)
 
 ⛔ REGRA CRÍTICA — categoria_sugerida é OBRIGATÓRIA. NUNCA devolva null.
