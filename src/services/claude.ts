@@ -524,14 +524,19 @@ async function transcreverCupom(
     ? `O usuário identificou este documento como: "${caption}". Isso pode ajudar a entender o contexto, mas sua tarefa aqui é só transcrever os números — não categorize.`
     : "Transcreva todas as linhas de produto deste documento.";
   const response = await getClient().chat.completions.create({
-    model: "gpt-4o-mini",
+    // gpt-4o (não o -mini) + detail "high" — cupons fiscais têm texto miúdo
+    // e denso (16+ linhas com 3 números cada); o modelo mini + resolução
+    // automática (que costuma cair pra baixa) estava perdendo/confundindo
+    // números nas linhas de baixo da nota. Custa mais por imagem, mas é
+    // exatamente a troca de precisão por custo que foi pedida.
+    model: "gpt-4o",
     max_tokens: 2048,
     messages: [
       { role: "system", content: TRANSCRICAO_SYSTEM },
       {
         role: "user",
         content: [
-          { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64}` } },
+          { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64}`, detail: "high" } },
           { type: "text", text: contexto },
         ],
       },
