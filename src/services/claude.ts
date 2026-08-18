@@ -4,7 +4,7 @@ import { promisify } from "util";
 import { writeFileSync, readFileSync, unlinkSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { ExtractedDocument, ExtracaoMultipla } from "../types.js";
+import { ExtractedDocument, ExtracaoMultipla, ItemExtraido } from "../types.js";
 
 const execAsync = promisify(exec);
 
@@ -151,6 +151,102 @@ export async function extractFromText(text: string): Promise<ExtractedDocument |
 
 // ── Extração multi-item (imagens e PDFs de notas com vários produtos) ─────────
 
+// Lista de categorias reais do cliente, compartilhada entre o prompt antigo
+// (EXTRACTION_MULTI_SYSTEM, mantido como fallback) e o novo estágio de
+// classificação (CLASSIFICACAO_SYSTEM) do pipeline em duas etapas.
+const LISTA_CATEGORIAS = `⛔ REGRA CRÍTICA — categoria_sugerida é OBRIGATÓRIA. NUNCA devolva null.
+Use EXATAMENTE uma categoria da lista abaixo. Sem exceções, sem criatividade.
+Não saber qual categoria usar NUNCA muda o tipo_lancamento — se é claramente o restaurante
+comprando algo (mesmo sem achar a categoria perfeita), continua sendo "despesa" e você escolhe a
+categoria de despesa mais próxima da lista. Nunca "resolva" a incerteza de categoria jogando o
+item pra uma categoria de receita.
+
+MAPEAMENTO DE CATEGORIAS REAIS DO CLIENTE:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+RECEITAS:
+  "Vendas - Dinheiro", "Vendas - Pix", "Vendas - Cartão de Débito", "Vendas - Cartão de Crédito",
+  "Vendas - iFood", "Vendas - Vale Refeição", "Serviços - Eventos", "Outras Receitas"
+
+CMV (Custo da Mercadoria Vendida):
+  "Bovinos", "Suínos", "Ovinos", "Aves", "Ovos", "Frutos do Mar", "Frutas, legumes e verduras FLV",
+  "Doces industrializados", "Latícinios", "Congelados", "Grãos/Cereais/Farinha", "Óleos/Azeites/Gordura",
+  "Café", "Conservas", "Condimentos/Temperos/Molhos", "Embalagens e Descartáveis", "Etiquetas"
+
+BEBIDAS (Materiais de Venda Direta):
+  "Cervejas", "Destilados", "Bebidas Não alcoólicas", "Vinhos"
+
+MATERIAIS DE APOIO:
+  "Material de limpeza e higiene"
+
+MANO DE OBRA EVENTUAL:
+  "Mão de Obra Eventual / Freelancer"
+
+TARIFAS (Cartões/Delivery):
+  "Cartão de Crédito", "Cartão de Débito", "Ifood", "Pix"
+
+IMPOSTOS VARIÁVEIS:
+  "PIS", "COFINS", "FUNCEP", "FEEF", "Simples Nacional Consultoria", "ICMS bebida quente", "ICMS fronteira", "ICMS normal"
+
+OCUPAÇÃO:
+  "Aluguel do estabelecimento", "IPTU", "TCR", "Outros impostos e taxas"
+
+UTILIDADES PÚBLICAS:
+  "Conta de Luz", "Conta de Água", "Telefone", "Conta de Gás"
+
+DESPESAS ADMINISTRATIVAS (⭐ INTERNET VAI AQUI):
+  "Material de Escritório / informática", "Sistema Gerencial", "Internet", "Seguro",
+  "Aluguel de maquinetas", "Aluguel de Equipamentos", "Despesas de Locomoção",
+  "Assinaturas digitais/Apps/Softwares", "Sindicato", "Despesas com veículos (comb., manut., IPVA, outros)",
+  "Outras despesas administrativas"
+
+MARKETING:
+  "Anúncios", "Criação de conteúdo/Influencers", "Divulgação"
+
+MANUTENÇÃO:
+  "Predial", "Reparos Máquinas e Equipamentos", "Preventiva"
+
+AQUISIÇÃO:
+  "Equipamentos", "Utensílios cozinha e salão"
+
+SERVIÇOS TERCEIRIZADOS:
+  "Contabilidade", "Segurança", "Segurança eletrônica", "Transportadora", "Serviços gráficos",
+  "Dedetização", "Advocacia", "Músicos/bandas", "Agência de Marketing", "Jardinagem/Paisagismo/Decoração",
+  "Consultoria Gastronomia", "Assessoria Nutricional"
+
+PESSOAL (Mão de Obra Fixa):
+  "Salários", "Vale-Transporte", "Férias", "INSS", "FGTS", "Despesas com admissão e demissão",
+  "Assistência médica", "Medicina do Trabalho", "Seguro de Vida", "13º salário", "Rescisões", "Extras",
+  "Gratificação", "Contribuição sindical / assistencial", "Retenção IRPF", "Salário Família",
+  "Bolsa Auxilio Estágio", "Cursos profissionalizantes", "Uniformes", "Ajuda de custo (Moradia)"
+
+RETIRADA DE SÓCIOS:
+  "Retirada de lucro de Sócios"
+
+FINANCEIRAS:
+  "Despesas Bancárias", "IOF", "Empréstimos/Giro", "Juros"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+EXEMPLOS DE MAPEAMENTO (estude bem):
+  • "Brisanet", "Vivo", "Claro", "provedor", "banda larga", "internet" → "Internet" (ADMINISTRATIVAS, NÃO UTILIDADES)
+  • "Copasa", "Sabesp", "conta de água" → "Conta de Água" (UTILIDADES)
+  • "CEMIG", "Neon", "Light", "conta de luz", "energia" → "Conta de Luz" (UTILIDADES)
+  • "queijo", "manteiga", "leite" → "Latícinios" (CMV)
+  • "carne", "boi", "alcatra" → "Bovinos" (CMV)
+  • "frango", "peito", "coxa" → "Aves" (CMV)`;
+
+// Regra dos 5 produtos rastreados individualmente (reaproveitada nos dois
+// prompts que precisam categorizar produto por produto).
+const REGRA_SUBCATEGORIAS = `⛔ PRODUTOS RASTREADOS INDIVIDUALMENTE — nunca ficam agrupados com outros produtos
+da mesma categoria, sempre viram item próprio:
+  • "Filé de Peito"    → categoria_sugerida "Aves",                    subcategoria "Filé de Peito"
+  • "Filé Mignon"      → categoria_sugerida "Bovinos",                 subcategoria "Filé Mignon"
+  • "Queijo Mussarela" → categoria_sugerida "Latícinios",              subcategoria "Queijo Mussarela"
+  • "Camarão"          → categoria_sugerida "Frutos do Mar",           subcategoria "Camarão"
+  • "Óleo"             → categoria_sugerida "Óleos/Azeites/Gordura",   subcategoria "Óleo"
+Para qualquer outro produto, subcategoria fica null.`;
+
 const EXTRACTION_MULTI_SYSTEM = `Você é especializado em leitura de documentos financeiros para restaurantes brasileiros.
 Analise o documento e extraia EXATAMENTE as categorias abaixo (sem invenções).
 Retorne SOMENTE JSON válido, sem markdown, sem explicações.
@@ -239,87 +335,7 @@ Regras:
   algum produto do cupom, (4) se a soma de um grupo bate com os produtos listados nele.
 - Atenção ao formato de data: DD/MM/AAAA (Ex: 01/08/2026 = 1º de agosto)
 
-⛔ REGRA CRÍTICA — categoria_sugerida é OBRIGATÓRIA. NUNCA devolva null.
-Use EXATAMENTE uma categoria da lista abaixo. Sem exceções, sem criatividade.
-Não saber qual categoria usar NUNCA muda o tipo_lancamento — se é claramente o restaurante
-comprando algo (mesmo sem achar a categoria perfeita), continua sendo "despesa" e você escolhe a
-categoria de despesa mais próxima da lista. Nunca "resolva" a incerteza de categoria jogando o
-item pra uma categoria de receita.
-
-MAPEAMENTO DE CATEGORIAS REAIS DO CLIENTE:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-RECEITAS:
-  "Vendas - Dinheiro", "Vendas - Pix", "Vendas - Cartão de Débito", "Vendas - Cartão de Crédito",
-  "Vendas - iFood", "Vendas - Vale Refeição", "Serviços - Eventos", "Outras Receitas"
-
-CMV (Custo da Mercadoria Vendida):
-  "Bovinos", "Suínos", "Ovinos", "Aves", "Ovos", "Frutos do Mar", "Frutas, legumes e verduras FLV",
-  "Doces industrializados", "Latícinios", "Congelados", "Grãos/Cereais/Farinha", "Óleos/Azeites/Gordura",
-  "Café", "Conservas", "Condimentos/Temperos/Molhos", "Embalagens e Descartáveis", "Etiquetas"
-
-BEBIDAS (Materiais de Venda Direta):
-  "Cervejas", "Destilados", "Bebidas Não alcoólicas", "Vinhos"
-
-MATERIAIS DE APOIO:
-  "Material de limpeza e higiene"
-
-MANO DE OBRA EVENTUAL:
-  "Mão de Obra Eventual / Freelancer"
-
-TARIFAS (Cartões/Delivery):
-  "Cartão de Crédito", "Cartão de Débito", "Ifood", "Pix"
-
-IMPOSTOS VARIÁVEIS:
-  "PIS", "COFINS", "FUNCEP", "FEEF", "Simples Nacional Consultoria", "ICMS bebida quente", "ICMS fronteira", "ICMS normal"
-
-OCUPAÇÃO:
-  "Aluguel do estabelecimento", "IPTU", "TCR", "Outros impostos e taxas"
-
-UTILIDADES PÚBLICAS:
-  "Conta de Luz", "Conta de Água", "Telefone", "Conta de Gás"
-
-DESPESAS ADMINISTRATIVAS (⭐ INTERNET VAI AQUI):
-  "Material de Escritório / informática", "Sistema Gerencial", "Internet", "Seguro",
-  "Aluguel de maquinetas", "Aluguel de Equipamentos", "Despesas de Locomoção",
-  "Assinaturas digitais/Apps/Softwares", "Sindicato", "Despesas com veículos (comb., manut., IPVA, outros)",
-  "Outras despesas administrativas"
-
-MARKETING:
-  "Anúncios", "Criação de conteúdo/Influencers", "Divulgação"
-
-MANUTENÇÃO:
-  "Predial", "Reparos Máquinas e Equipamentos", "Preventiva"
-
-AQUISIÇÃO:
-  "Equipamentos", "Utensílios cozinha e salão"
-
-SERVIÇOS TERCEIRIZADOS:
-  "Contabilidade", "Segurança", "Segurança eletrônica", "Transportadora", "Serviços gráficos",
-  "Dedetização", "Advocacia", "Músicos/bandas", "Agência de Marketing", "Jardinagem/Paisagismo/Decoração",
-  "Consultoria Gastronomia", "Assessoria Nutricional"
-
-PESSOAL (Mão de Obra Fixa):
-  "Salários", "Vale-Transporte", "Férias", "INSS", "FGTS", "Despesas com admissão e demissão",
-  "Assistência médica", "Medicina do Trabalho", "Seguro de Vida", "13º salário", "Rescisões", "Extras",
-  "Gratificação", "Contribuição sindical / assistencial", "Retenção IRPF", "Salário Família",
-  "Bolsa Auxilio Estágio", "Cursos profissionalizantes", "Uniformes", "Ajuda de custo (Moradia)"
-
-RETIRADA DE SÓCIOS:
-  "Retirada de lucro de Sócios"
-
-FINANCEIRAS:
-  "Despesas Bancárias", "IOF", "Empréstimos/Giro", "Juros"
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-EXEMPLOS DE MAPEAMENTO (estude bem):
-  • "Brisanet", "Vivo", "Claro", "provedor", "banda larga", "internet" → "Internet" (ADMINISTRATIVAS, NÃO UTILIDADES)
-  • "Copasa", "Sabesp", "conta de água" → "Conta de Água" (UTILIDADES)
-  • "CEMIG", "Neon", "Light", "conta de luz", "energia" → "Conta de Luz" (UTILIDADES)
-  • "queijo", "manteiga", "leite" → "Latícinios" (CMV)
-  • "carne", "boi", "alcatra" → "Bovinos" (CMV)
-  • "frango", "peito", "coxa" → "Aves" (CMV)`;
+${LISTA_CATEGORIAS}`;
 
 function parseMulti(raw: string): ExtracaoMultipla | null {
   try {
@@ -390,6 +406,320 @@ export async function extractMultiFromImage(
   return parseMulti(raw);
 }
 
+// ── Pipeline em duas etapas: transcrição + classificação ──────────────────────
+//
+// Pedir pra uma única chamada de IA ler a imagem, fazer contas (desconto,
+// valor unitário x valor do item) E categorizar tudo de uma vez mostrou ser
+// pouco confiável em cupons densos (16+ linhas): a IA variava entre
+// tentativas — somava grupo errado, perdia item, trocava desconto de lugar.
+//
+// Separando em duas chamadas mais simples — 1) só ler os números certos, sem
+// categorizar nada; 2) só classificar texto já limpo, sem fazer conta nenhuma
+// — e fazendo o AGRUPAMENTO/SOMA no código (determinístico), a IA só precisa
+// acertar leitura (etapa 1) e categoria (etapa 2), separadamente, e a soma
+// nunca mais erra porque deixa de ser trabalho da IA.
+
+interface LinhaCupom {
+  descricao: string;
+  quantidade: number | null;
+  unidade: string | null;
+  valor_item: number; // valor do produto já multiplicado pela quantidade, ANTES do desconto
+  desconto: number; // valor a subtrair (0 se não teve desconto nessa linha)
+}
+
+interface TranscricaoCupom {
+  skip?: boolean;
+  tipo_documento: string;
+  fornecedor: string | null;
+  cnpj_cpf: string | null;
+  data_emissao: string | null;
+  data_vencimento: string | null;
+  valor_total_documento: number | null;
+  linhas: LinhaCupom[];
+}
+
+const TRANSCRICAO_SYSTEM = `Você transcreve documentos financeiros brasileiros (cupons fiscais, notas, recibos)
+LINHA POR LINHA. Sua única tarefa é ler os números certos — NÃO categorize, NÃO agrupe, NÃO
+decida receita/despesa. Isso é feito depois, por outra pessoa, com o texto que você transcrever.
+
+Retorne SOMENTE JSON válido, sem markdown, sem explicações.
+
+Se não for um documento financeiro (saudação, conversa, pergunta sem valor), retorne: {"skip": true}
+
+Schema:
+{
+  "tipo_documento": "nota_fiscal" | "boleto" | "comprovante" | "recibo" | "extrato" | "outro",
+  "fornecedor": string | null,
+  "cnpj_cpf": string | null,
+  "data_emissao": "YYYY-MM-DD" | null,
+  "data_vencimento": "YYYY-MM-DD" | null,
+  "valor_total_documento": number | null,
+  "linhas": [
+    {
+      "descricao": string,
+      "quantidade": number | null,
+      "unidade": string | null,
+      "valor_item": number,
+      "desconto": number
+    }
+  ]
+}
+
+Regras:
+- Transcreva TODA linha de produto do documento, uma por uma — não pule nenhuma, mesmo que
+  pareça repetida ou parecida com outra (ex: se "Manjericão" aparece 2 vezes na nota, gera 2
+  linhas, não 1).
+- Não invente produtos que não existem no documento. Não duplique um produto que só aparece
+  uma vez.
+- "valor_item" é o VALOR DO ITEM já multiplicado pela quantidade — ANTES de qualquer desconto.
+  Cupons fiscais (NFC-e) costumam ter 3 números por linha de produto: quantidade, valor
+  UNITÁRIO (R$ por kg/un/litro) e valor do ITEM (o já calculado). Use SEMPRE o valor do ITEM,
+  NUNCA o valor unitário — isso é crítico em produtos pesados (kg), onde o preço por kg é maior
+  que o valor realmente pago pela quantidade pesada. Ex: linha
+  "PIMENTAO AMARELO kg  0,225KG  27,90  6,28" → valor_item é 6,28 (0,225kg × 27,90/kg), NÃO 27,90.
+  Se só existir um número na linha, use ele.
+- "desconto": se tiver uma linha de "DESCONTO" logo abaixo de um produto, coloque o valor dela
+  (positivo) no campo "desconto" DESSE produto (o de cima). 0 se não teve desconto. Nunca
+  aplique o desconto de um produto em outro — é sempre o produto imediatamente acima.
+- valores sempre números sem formatação (ex: 27.90), nunca string.
+- Atenção ao formato de data: DD/MM/AAAA (Ex: 01/08/2026 = 1º de agosto)
+- Depois de transcrever tudo, confira: a soma de (valor_item - desconto) de todas as linhas
+  deveria bater com "valor_total_documento". Se não bater, revise as linhas antes de responder.`;
+
+function parseTranscricao(raw: string): TranscricaoCupom | null {
+  try {
+    const cleaned = raw.trim().replace(/^```json\s*/i, "").replace(/```$/i, "");
+    const parsed = JSON.parse(cleaned);
+    if (parsed.skip === true) return null;
+    if (!Array.isArray(parsed.linhas) || parsed.linhas.length === 0) {
+      console.log("[Claude] Transcrição sem linhas");
+      return null;
+    }
+    return parsed as TranscricaoCupom;
+  } catch (err) {
+    console.error("[Claude] Erro ao parsear transcrição:", err, "Raw:", raw.substring(0, 200));
+    return null;
+  }
+}
+
+async function transcreverCupom(
+  imageBuffer: Buffer,
+  mimeType: "image/jpeg" | "image/png" | "image/webp" | "image/gif",
+  caption?: string
+): Promise<TranscricaoCupom | null> {
+  const base64 = imageBuffer.toString("base64");
+  const contexto = caption
+    ? `O usuário identificou este documento como: "${caption}". Isso pode ajudar a entender o contexto, mas sua tarefa aqui é só transcrever os números — não categorize.`
+    : "Transcreva todas as linhas de produto deste documento.";
+  const response = await getClient().chat.completions.create({
+    model: "gpt-4o-mini",
+    max_tokens: 2048,
+    messages: [
+      { role: "system", content: TRANSCRICAO_SYSTEM },
+      {
+        role: "user",
+        content: [
+          { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64}` } },
+          { type: "text", text: contexto },
+        ],
+      },
+    ],
+  } as any);
+  const textContent = response.choices[0]?.message?.content;
+  if (!textContent) throw new Error("OpenAI não retornou transcrição");
+  return parseTranscricao(typeof textContent === "string" ? textContent : "");
+}
+
+// ── Etapa 2: classificação (texto puro, sem imagem, sem conta nenhuma) ────────
+
+interface ClassificacaoProduto {
+  indice: number; // índice na lista enviada, pra casar de volta com a linha certa
+  tipo_lancamento: "receita" | "despesa";
+  categoria_sugerida: string;
+  subcategoria: string | null;
+}
+
+const CLASSIFICACAO_SYSTEM = `Você classifica produtos de documentos financeiros de restaurantes brasileiros em
+categorias contábeis. Os valores já estão corretos e prontos — sua única tarefa é escolher a
+categoria de cada produto. NÃO faça nenhuma conta.
+
+Retorne SOMENTE JSON válido, sem markdown, sem explicações.
+
+Schema:
+{
+  "classificacoes": [
+    { "indice": number, "tipo_lancamento": "receita" | "despesa", "categoria_sugerida": string, "subcategoria": string | null }
+  ]
+}
+
+Regras:
+- tipo_lancamento: "despesa" quando o restaurante está PAGANDO (comprando insumos, embalagens,
+  equipamentos, serviços, mercadoria de fornecedor). "receita" SÓ quando é dinheiro que o
+  restaurante está RECEBENDO (venda pro cliente, fechamento de caixa). Cupons de "conferência
+  de produtos" ou notas com produto/quantidade/preço listando insumos são SEMPRE despesa.
+- Devolva "indice" IGUAL ao índice do produto na lista que você recebeu, na mesma ordem — um
+  item de classificação por produto recebido, sem pular nenhum e sem inventar índice novo.
+
+${REGRA_SUBCATEGORIAS}
+
+${LISTA_CATEGORIAS}`;
+
+const SUBCATEGORIAS_VALIDAS = new Set([
+  "Filé de Peito",
+  "Filé Mignon",
+  "Queijo Mussarela",
+  "Camarão",
+  "Óleo",
+]);
+
+function parseClassificacao(raw: string): ClassificacaoProduto[] | null {
+  try {
+    const cleaned = raw.trim().replace(/^```json\s*/i, "").replace(/```$/i, "");
+    const parsed = JSON.parse(cleaned);
+    if (!Array.isArray(parsed.classificacoes)) return null;
+    return parsed.classificacoes as ClassificacaoProduto[];
+  } catch (err) {
+    console.error("[Claude] Erro ao parsear classificação:", err, "Raw:", raw.substring(0, 200));
+    return null;
+  }
+}
+
+async function classificarLinhas(
+  linhas: LinhaCupom[],
+  contexto: { fornecedor: string | null; tipo_documento: string }
+): Promise<ClassificacaoProduto[] | null> {
+  const produtos = linhas.map((l, i) => `${i}: ${l.descricao}`).join("\n");
+  const prompt = `Fornecedor: ${contexto.fornecedor ?? "não identificado"}
+Tipo de documento: ${contexto.tipo_documento}
+
+Produtos a classificar (um por linha, "índice: descrição"):
+${produtos}`;
+
+  const response = await getClient().chat.completions.create({
+    model: "gpt-4o-mini",
+    max_tokens: 2048,
+    messages: [
+      { role: "system", content: CLASSIFICACAO_SYSTEM },
+      { role: "user", content: prompt },
+    ],
+  } as any);
+  const textContent = response.choices[0]?.message?.content;
+  if (!textContent) throw new Error("OpenAI não retornou classificação");
+  return parseClassificacao(typeof textContent === "string" ? textContent : "");
+}
+
+// ── Merge determinístico: agrupa por categoria e soma em CÓDIGO (não IA) ──────
+// Exportado só pra ser testável isoladamente com dados simulados.
+
+export function montarItensAgrupados(
+  linhas: LinhaCupom[],
+  classificacoes: ClassificacaoProduto[]
+): ItemExtraido[] {
+  const classMap = new Map(classificacoes.map((c) => [c.indice, c]));
+
+  interface Grupo {
+    categoria_sugerida: string;
+    tipo_lancamento: "receita" | "despesa";
+    subcategoria: string | null;
+    produtos: { descricao: string; quantidade: number | null; unidade: string | null }[];
+    valor: number;
+  }
+
+  const grupos = new Map<string, Grupo>();
+
+  linhas.forEach((linha, idx) => {
+    const classificacao = classMap.get(idx);
+    // Rede de segurança: se a classificação sumir/não vier pra essa linha,
+    // usa um fallback óbvio em vez de descartar o produto silenciosamente.
+    const categoria = classificacao?.categoria_sugerida || "Outras despesas administrativas";
+    const tipo = classificacao?.tipo_lancamento || "despesa";
+    const subcategoriaBruta = classificacao?.subcategoria ?? null;
+    const subcategoria = subcategoriaBruta && SUBCATEGORIAS_VALIDAS.has(subcategoriaBruta) ? subcategoriaBruta : null;
+
+    const valorFinal = Math.round((linha.valor_item - (linha.desconto || 0)) * 100) / 100;
+
+    // Produtos rastreados (subcategoria != null) NUNCA agrupam com outros —
+    // cada linha vira seu próprio item, com quantidade exata dela.
+    const chave = subcategoria ? `sub::${subcategoria}::${idx}` : `cat::${categoria}`;
+
+    const atual: Grupo = grupos.get(chave) ?? {
+      categoria_sugerida: categoria,
+      tipo_lancamento: tipo,
+      subcategoria,
+      produtos: [],
+      valor: 0,
+    };
+
+    atual.produtos.push({ descricao: linha.descricao, quantidade: linha.quantidade, unidade: linha.unidade });
+    atual.valor = Math.round((atual.valor + valorFinal) * 100) / 100;
+    grupos.set(chave, atual);
+  });
+
+  return Array.from(grupos.values()).map((g) => {
+    const descricao =
+      g.produtos.length > 1
+        ? g.produtos
+            .map((p) => `${p.descricao}${p.quantidade && p.unidade ? ` (${p.quantidade}${p.unidade})` : ""}`)
+            .join(", ")
+        : g.produtos[0].descricao;
+
+    return {
+      descricao,
+      valor: g.valor,
+      quantidade: g.produtos.length === 1 ? g.produtos[0].quantidade ?? undefined : undefined,
+      unidade: g.produtos.length === 1 ? g.produtos[0].unidade ?? undefined : undefined,
+      categoria_sugerida: g.categoria_sugerida,
+      subcategoria: g.subcategoria,
+      tipo_lancamento: g.tipo_lancamento,
+      confianca: "alta" as const,
+    };
+  });
+}
+
+export async function extractMultiFromImageV2(
+  imageBuffer: Buffer,
+  mimeType: "image/jpeg" | "image/png" | "image/webp" | "image/gif",
+  caption?: string
+): Promise<ExtracaoMultipla | null> {
+  const transcricao = await transcreverCupom(imageBuffer, mimeType, caption);
+  if (!transcricao || !transcricao.linhas || transcricao.linhas.length === 0) {
+    console.warn("[Claude] Transcrição vazia/falhou, caindo pro pipeline antigo (uma chamada só)");
+    return extractMultiFromImage(imageBuffer, mimeType, caption);
+  }
+
+  const somaLinhas = transcricao.linhas.reduce((s, l) => s + (l.valor_item - (l.desconto || 0)), 0);
+  if (transcricao.valor_total_documento != null) {
+    const diff = Math.abs(somaLinhas - transcricao.valor_total_documento);
+    if (diff > 0.05) {
+      console.warn(
+        `[Claude] Transcrição: soma das linhas (${somaLinhas.toFixed(2)}) difere do total do documento (${transcricao.valor_total_documento}) em R$${diff.toFixed(2)}`
+      );
+    }
+  }
+
+  const classificacoes = await classificarLinhas(transcricao.linhas, {
+    fornecedor: transcricao.fornecedor,
+    tipo_documento: transcricao.tipo_documento,
+  });
+
+  if (!classificacoes || classificacoes.length === 0) {
+    console.warn("[Claude] Classificação vazia/falhou, caindo pro pipeline antigo (uma chamada só)");
+    return extractMultiFromImage(imageBuffer, mimeType, caption);
+  }
+
+  const itens = montarItensAgrupados(transcricao.linhas, classificacoes);
+
+  return {
+    tipo_documento: transcricao.tipo_documento,
+    fornecedor: transcricao.fornecedor ?? undefined,
+    cnpj_cpf: transcricao.cnpj_cpf ?? undefined,
+    data_emissao: transcricao.data_emissao ?? undefined,
+    data_vencimento: transcricao.data_vencimento ?? undefined,
+    valor_total_documento: transcricao.valor_total_documento ?? undefined,
+    itens,
+  };
+}
+
 // ── Análise financeira consultiva ─────────────────────────────────────────────
 
 const ANALISE_SYSTEM = `Você é um consultor financeiro especializado em restaurantes brasileiros.
@@ -449,7 +779,7 @@ export async function extractMultiFromPDF(pdfBuffer: Buffer): Promise<ExtracaoMu
     console.log(`[Poppler] PDF convertido para PNG (${Math.round(pngBuffer.length / 1024)}KB)`);
 
     // Processa como imagem normal
-    const result = await extractMultiFromImage(pngBuffer, "image/png", "Documento extraído de PDF");
+    const result = await extractMultiFromImageV2(pngBuffer, "image/png", "Documento extraído de PDF");
 
     // Limpa arquivos temporários
     unlinkSync(pdfPath);

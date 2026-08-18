@@ -1,6 +1,6 @@
 import { ZAPIPayload, ExtractedDocument, ExtracaoMultipla } from "../types.js";
 import { downloadMedia } from "./zapi.js";
-import { extractFromImage, extractFromPDF, extractFromText, extractMultiFromImage, extractMultiFromPDF } from "./claude.js";
+import { extractFromImage, extractFromPDF, extractFromText, extractMultiFromImageV2, extractMultiFromPDF } from "./claude.js";
 import { extractFromNFeXml } from "./xml-nfe.js";
 import { uploadDocument } from "../db/supabase.js";
 
@@ -38,7 +38,7 @@ export async function processar(payload: ZAPIPayload): Promise<ExtracaoResult | 
     const filename = `img_${payload.messageId}.jpg`;
     const urlArquivo = await uploadDocument(buffer, filename, mimeType);
 
-    const multipla = await extractMultiFromImage(buffer, mimeType, payload.image!.caption);
+    const multipla = await extractMultiFromImageV2(buffer, mimeType, payload.image!.caption);
     if (!multipla) return null;
     return { multipla, urlArquivo };
   }
