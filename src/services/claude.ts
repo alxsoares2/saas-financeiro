@@ -14,6 +14,13 @@ function getClient(): OpenAI {
   if (!_client) {
     _client = new OpenAI({
       apiKey: process.env.OPENAI_API_KEY,
+      // Sem timeout explícito, uma instabilidade na API da OpenAI deixava a
+      // chamada pendurada indefinidamente — o usuário ficava travado no
+      // "Analisando documento..." pra sempre, sem erro e sem resposta.
+      // Com o timeout, isso agora estoura uma exceção (capturada pelo
+      // try/catch do webhook) em vez de travar a conversa pra sempre.
+      timeout: 45_000,
+      maxRetries: 2,
     });
   }
   return _client;
