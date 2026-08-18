@@ -483,9 +483,12 @@ Regras:
 - "valor_item" é o VALOR DO ITEM já multiplicado pela quantidade — ANTES de qualquer desconto.
   Cupons fiscais (NFC-e) costumam ter 3 números por linha de produto: quantidade, valor
   UNITÁRIO (R$ por kg/un/litro) e valor do ITEM (o já calculado). Use SEMPRE o valor do ITEM,
-  NUNCA o valor unitário — isso é crítico em produtos pesados (kg), onde o preço por kg é maior
-  que o valor realmente pago pela quantidade pesada. Ex: linha
-  "PIMENTAO AMARELO kg  0,225KG  27,90  6,28" → valor_item é 6,28 (0,225kg × 27,90/kg), NÃO 27,90.
+  NUNCA o valor unitário — isso vale pra QUALQUER produto vendido por peso/kg na nota, não só
+  o primeiro que aparecer, incluindo produtos perto do fim da lista (queijo, frios, carnes
+  fatiadas etc. costumam ser os últimos itens e são vendidos por kg também). Confira TODOS os
+  produtos com "kg" na unidade, um por um, sem exceção. Exemplos:
+    "PIMENTAO AMARELO kg   0,225KG  27,90  6,28"  → valor_item é 6,28 (0,225kg × 27,90/kg), NÃO 27,90
+    "QUEIJO MUSSARELA kg   0,596KG  43,90  26,16" → valor_item é 26,16 (0,596kg × 43,90/kg), NÃO 43,90
   Se só existir um número na linha, use ele.
 - "desconto": se tiver uma linha de "DESCONTO" logo abaixo de um produto, coloque o valor dela
   (positivo) no campo "desconto" DESSE produto (o de cima). 0 se não teve desconto. Nunca
