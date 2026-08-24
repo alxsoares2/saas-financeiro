@@ -1,5 +1,5 @@
 import puppeteer from "puppeteer";
-import { SugestaoCompraResultado } from "./types.js";
+import { Produto, SugestaoCompraResultado } from "./types.js";
 
 function brl(v: number): string {
   return v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -115,9 +115,7 @@ function gerarHtml(resultado: SugestaoCompraResultado): string {
 </html>`;
 }
 
-export async function gerarPdfSugestaoCompra(resultado: SugestaoCompraResultado): Promise<Buffer> {
-  const html = gerarHtml(resultado);
-
+async function renderizarPdf(html: string): Promise<Buffer> {
   const browser = await puppeteer.launch({
     headless: true,
     args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
@@ -137,4 +135,119 @@ export async function gerarPdfSugestaoCompra(resultado: SugestaoCompraResultado)
   } finally {
     await browser.close();
   }
+}
+
+export async function gerarPdfSugestaoCompra(resultado: SugestaoCompraResultado): Promise<Buffer> {
+  return renderizarPdf(gerarHtml(resultado));
+}
+
+// ── Consulta de estoque atual (lista de produtos) ─────────────────────────
+
+function estiloBase(): string {
+  return `
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+    font-size: 12px;
+    background: #f1f5f9;
+    color: #1e293b;
+    padding: 28px;
+  }
+  .header {
+    background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+    color: white;
+    padding: 20px 28px;
+    border-radius: 14px;
+    margin-bottom: 20px;
+  }
+  .header h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.5px; }
+  .header .meta { font-size: 13px; opacity: 0.8; margin-top: 6px; }
+  .header .badge {
+    display: inline-block;
+    margin-top: 10px;
+    background: rgba(255,255,255,0.15);
+    border-radius: 8px;
+    padding: 6px 14px;
+    font-weight: 700;
+  }
+  .wrap {
+    background: white;
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.07);
+  }
+  table { width: 100%; border-collapse: collapse; }
+  thead th {
+    padding: 10px 12px;
+    background: #f8fafc;
+    border-bottom: 2px solid #e2e8f0;
+    font-size: 10px;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    text-align: left;
+  }
+  td { padding: 8px 12px; border-bottom: 1px solid #f1f5f9; font-size: 12px; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.destaque { font-weight: 700; }
+  .rodape { margin-top: 16px; text-align: center; font-size: 10px; color: #94a3b8; }
+  `;
+}
+
+function linhaEstoque(p: Produto): string {
+  const abaixoDoMinimo = Number(p.estoque_atual) < Number(p.estoque_minimo);
+  return `
+    <tr class="${abaixoDoMinimo ? "falta" : "ok"}">
+      <td class="desc">${p.nome}</td>
+      <td>${p.tipo === "manipulado" ? "manipulado" : "bruto"}${p.marca ? ` · ${p.marca}` : ""}</td>
+      <td class="num ${abaixoDoMinimo ? "destaque" : ""}" style="${abaixoDoMinimo ? "color:#dc2626" : ""}">${p.estoque_atual}</td>
+      <td class="num">${p.estoque_minimo}</td>
+      <td>${p.unidade}</td>
+    </tr>`;
+}
+
+function gerarHtmlEstoque(produtos: Produto[]): string {
+  const ativos = produtos.filter((p) => p.ativo).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+  const abaixoDoMinimo = ativos.filter((p) => Number(p.estoque_atual) < Number(p.estoque_minimo));
+  const linhas = ativos.map(linhaEstoque).join("");
+
+  return `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<style>${estiloBase()}</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="h1" style="font-size:22px;font-weight:700;color:white">ESTOQUE ATUAL</div>
+  <div class="meta">${ativos.length} produtos ativos</div>
+  ${abaixoDoMinimo.length > 0 ? `<div class="badge">${abaixoDoMinimo.length} abaixo do mínimo</div>` : ""}
+</div>
+
+<div class="wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Produto</th>
+        <th>Tipo</th>
+        <th style="text-align:right">Estoque</th>
+        <th style="text-align:right">Mínimo</th>
+        <th>Unidade</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${linhas}
+    </tbody>
+  </table>
+</div>
+
+<div class="rodape">Gerado em ${new Date().toLocaleString("pt-BR")}</div>
+
+</body>
+</html>`;
+}
+
+export async function gerarPdfEstoque(produtos: Produto[]): Promise<Buffer> {
+  return renderizarPdf(gerarHtmlEstoque(produtos));
 }

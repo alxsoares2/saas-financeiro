@@ -1,6 +1,6 @@
 import { Router, Request, Response } from "express";
 import { calcularSugestaoCompra, formatarSugestaoWhatsApp } from "../services/estoque/sugestao-compra.js";
-import { gerarPdfSugestaoCompra } from "../services/estoque/pdf-relatorio.js";
+import { gerarPdfEstoque, gerarPdfSugestaoCompra } from "../services/estoque/pdf-relatorio.js";
 import { listProdutos } from "../services/estoque/db.js";
 
 const router = Router();
@@ -13,6 +13,20 @@ router.get("/produtos", async (_req: Request, res: Response) => {
   } catch (err) {
     console.error("[estoque route] Erro ao listar produtos:", err);
     res.status(500).json({ error: "Erro interno ao listar produtos" });
+  }
+});
+
+// GET /estoque/produtos/pdf — consulta de estoque atual em PDF
+router.get("/produtos/pdf", async (_req: Request, res: Response) => {
+  try {
+    const produtos = await listProdutos({ ativo: true });
+    const pdf = await gerarPdfEstoque(produtos);
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", 'inline; filename="estoque.pdf"');
+    res.send(pdf);
+  } catch (err) {
+    console.error("[estoque route] Erro ao gerar PDF de estoque:", err);
+    res.status(500).json({ error: "Erro interno ao gerar PDF de estoque" });
   }
 });
 
