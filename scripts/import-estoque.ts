@@ -420,6 +420,28 @@ const PADROES_SEED: PadraoSeed[] = [
   { produto: "Linguiça Calabresa", nomePadrao: "Pacote 2,5kg (ou 5kg)", pesoOuVolumePorUnidade: 2.5, unidadesPorPadrao: 1 },
   { produto: "Filé de Peito de Frango", nomePadrao: "Pacote 2,5kg (ou 5kg)", pesoOuVolumePorUnidade: 2.5, unidadesPorPadrao: 1 },
   { produto: "Ovos (Bandeja c/30)", nomePadrao: "Bandeja com 30 ovos", pesoOuVolumePorUnidade: 30, unidadesPorPadrao: 30 },
+
+  // Levantados em auditoria (scripts/_audit_padroes2.ts): produtos usados em
+  // fichas técnicas/sabores com a necessidade expressa em kg, mas contados
+  // em estoque numa unidade de embalagem — sem isso, o motor de sugestão
+  // comparava kg de receita contra contagem de embalagem (ex: "0,36" vindo
+  // de kg sendo lido como se já fosse bisnaga). Tamanho tirado do próprio
+  // nome do produto quando disponível (ex: "900ml", "500g", "Barra 1kg").
+  { produto: "Óleo de Soja 900ml", nomePadrao: "Garrafa 900ml (~0,9kg)", pesoOuVolumePorUnidade: 0.9, unidadesPorPadrao: 1 },
+  { produto: "Fermento Biológico 500g", nomePadrao: "Pacote 500g", pesoOuVolumePorUnidade: 0.5, unidadesPorPadrao: 1 },
+  { produto: "Tomate Seco Balde 2kg", nomePadrao: "Balde 2kg", pesoOuVolumePorUnidade: 2, unidadesPorPadrao: 1 },
+  { produto: "Champignon Fatiado Balde 2kg", nomePadrao: "Balde 2kg", pesoOuVolumePorUnidade: 2, unidadesPorPadrao: 1 },
+  { produto: "Salaminho 100g", nomePadrao: "Pacote 100g", pesoOuVolumePorUnidade: 0.1, unidadesPorPadrao: 1 },
+  { produto: "Geleia de Amora Queensberry 320g", nomePadrao: "Pote 320g", pesoOuVolumePorUnidade: 0.32, unidadesPorPadrao: 1 },
+  { produto: "Creme de Leite 200g", nomePadrao: "Caixinha 200g", pesoOuVolumePorUnidade: 0.2, unidadesPorPadrao: 1 },
+  { produto: "Chocolate Meio Amargo Barra 1kg", nomePadrao: "Barra 1kg", pesoOuVolumePorUnidade: 1, unidadesPorPadrao: 1 },
+
+  // ESTIMATIVAS — sem peso na embalagem original nem no nome do produto,
+  // então o tamanho abaixo é um chute razoável (revisar com o time e
+  // corrigir peso_ou_volume_por_unidade se o pacote real for diferente):
+  { produto: "Manjericão", nomePadrao: "Maço (estimado ~50g — CONFIRMAR)", pesoOuVolumePorUnidade: 0.05, unidadesPorPadrao: 1 },
+  { produto: "Rúcula", nomePadrao: "Maço (estimado ~50g — CONFIRMAR)", pesoOuVolumePorUnidade: 0.05, unidadesPorPadrao: 1 },
+  { produto: "Cream Cheese Polenghi/Catupiry", nomePadrao: "Pote (estimado ~300g — CONFIRMAR)", pesoOuVolumePorUnidade: 0.3, unidadesPorPadrao: 1 },
 ];
 
 async function importarPadroesEmbalagem(idPorNome: Map<string, string>): Promise<void> {

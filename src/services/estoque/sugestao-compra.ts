@@ -42,13 +42,30 @@
 //    usa o preco_unitario do membro mais barato (mesma lógica já usada
 //    pra escolher o refrigerante popular). Item sem preço cadastrado não
 //    entra no total (fica contado em itensComPrecoDesconhecido).
+// 8. Arredondamento sempre inteiro, sempre pra cima, nunca fração:
+//    - Produto com padrões_embalagem cadastrado E unidade CONTÍNUA (kg/g/
+//      l/ml, ex: Queijo Mussarela em kg com barra de 4kg): arredonda pro
+//      múltiplo inteiro do tamanho da embalagem.
+//    - Produto com padrões_embalagem cadastrado E unidade DISCRETA (ex:
+//      Requeijão em "bisnaga", Chocolate em "barra"): a ficha técnica
+//      declara a necessidade em kg, então primeiro CONVERTE kg→unidade de
+//      estoque usando o padrão (kg por 1 unidade), depois arredonda pro
+//      inteiro de unidades mais próximo pra cima (nunca "1,34 bisnaga").
+//    - Produto solto sem padrão cadastrado (tomate, banana, milho...):
+//      arredonda pro inteiro mais próximo pra cima, na própria unidade
+//      (kg ou un) — nunca fração.
+//    Quando a unidade da receita (ficha técnica/sabor) difere da unidade
+//    de estoque do produto e NÃO há padrão cadastrado pra converter, a
+//    quantidade fica na unidade da receita mesmo (mais visível o
+//    descompasso do que escondê-lo) — ver script scripts/_audit_padroes*.ts
+//    pra levantar esses casos.
 import {
   criarMetaProducao,
   getMembrosGrupo,
-  getPadraoEmbalagem,
   listFichasTecnicas,
   listGruposSubstituicao,
   listItensUniversais,
+  listPadroesEmbalagem,
   listProdutos,
   listSabores,
   listTodosIngredientesSabores,
@@ -110,16 +127,63 @@ function mediana(valores: number[]): number {
   return ordenados.length % 2 !== 0 ? ordenados[meio] : (ordenados[meio - 1] + ordenados[meio]) / 2;
 }
 
-function arredondarCompra(falta: number, padrao: PadraoEmbalagem | null): { quantidade: number; origemPadrao?: string } {
-  if (falta <= 0) return { quantidade: 0 };
-  if (!padrao || !padrao.peso_ou_volume_por_unidade) return { quantidade: falta };
+// Unidades "contínuas" (peso/volume) — só essas fazem sentido como
+// múltiplo fracionário de um padrão de embalagem (ex: barra de 4kg).
+// Qualquer outra unidade (bisnaga, barra, pacote, balde, un, maço...) é
+// inerentemente discreta — compra-se em unidades inteiras dela.
+const UNIDADES_CONTINUAS = new Set(["kg", "g", "l", "ml"]);
 
-  const tamanhoUnidade = padrao.peso_ou_volume_por_unidade;
-  let unidades = Math.ceil(falta / tamanhoUnidade);
-  if (padrao.multiplo_minimo && padrao.multiplo_minimo > 1) {
+function ehUnidadeContinua(unidade: string): boolean {
+  return UNIDADES_CONTINUAS.has(unidade.toLowerCase().trim());
+}
+
+function normalizarUnidade(unidade: string): string {
+  const u = unidade.toLowerCase().trim();
+  return u === "und" || u === "unid" || u === "unidade" ? "un" : u;
+}
+
+// Converte uma quantidade expressa na unidade da RECEITA (ficha técnica
+// ou sabor_ingrediente — normalmente kg, às vezes "und") pra unidade de
+// ESTOQUE do produto, quando elas divergem (ex: receita pede 0,09kg de
+// requeijão, mas o produto é contado em "bisnaga"). Usa
+// padrao.peso_ou_volume_por_unidade como "quantidade na unidade da
+// receita por 1 unidade de estoque". Sem padrão cadastrado pra converter,
+// devolve a quantidade como veio (descompasso fica visível no relatório
+// em vez de escondido) — ver premissa 8.
+function paraUnidadeDoEstoque(
+  quantidade: number,
+  unidadeReceita: string,
+  produto: Produto | undefined,
+  padroesPorProdutoId: Map<string, PadraoEmbalagem>
+): { quantidade: number; unidade: string } {
+  if (!produto) return { quantidade, unidade: unidadeReceita };
+  if (normalizarUnidade(unidadeReceita) === normalizarUnidade(produto.unidade)) {
+    return { quantidade, unidade: produto.unidade };
+  }
+
+  const padrao = padroesPorProdutoId.get(produto.id);
+  if (padrao?.peso_ou_volume_por_unidade) {
+    return { quantidade: quantidade / padrao.peso_ou_volume_por_unidade, unidade: produto.unidade };
+  }
+
+  return { quantidade, unidade: unidadeReceita };
+}
+
+// Arredonda SEMPRE pra um número inteiro de "incrementos de compra", sem
+// fração (ver premissa 8):
+//   - unidade contínua (kg/g/l/ml) + padrão cadastrado: incremento = o
+//     tamanho do padrão (ex: 4kg) — múltiplo inteiro dele.
+//   - qualquer outro caso (unidade discreta, ou sem padrão): incremento =
+//     1 unidade inteira de estoque.
+function arredondarCompra(falta: number, produtoUnidade: string, padrao: PadraoEmbalagem | null): { quantidade: number; origemPadrao?: string } {
+  if (falta <= 0) return { quantidade: 0 };
+
+  const incremento = padrao?.peso_ou_volume_por_unidade && ehUnidadeContinua(produtoUnidade) ? padrao.peso_ou_volume_por_unidade : 1;
+  let unidades = Math.ceil(falta / incremento);
+  if (padrao?.multiplo_minimo && padrao.multiplo_minimo > 1) {
     unidades = Math.ceil(unidades / padrao.multiplo_minimo) * padrao.multiplo_minimo;
   }
-  return { quantidade: unidades * tamanhoUnidade, origemPadrao: padrao.nome_padrao };
+  return { quantidade: unidades * incremento, origemPadrao: padrao?.nome_padrao };
 }
 
 // Monta a linha final do relatório (falta + arredondamento + valor
@@ -139,7 +203,7 @@ function resolverItem(params: {
 }): NecessidadeInsumo {
   const necessario = params.necessarioBase + params.colchao;
   const falta = Math.max(necessario - params.estoqueAtual, 0);
-  const { quantidade: sugestaoArredondada, origemPadrao } = arredondarCompra(falta, params.padrao);
+  const { quantidade: sugestaoArredondada, origemPadrao } = arredondarCompra(falta, params.unidade, params.padrao);
   const valorEstimado = params.precoUnitario != null ? round(params.precoUnitario * sugestaoArredondada) : null;
 
   return {
@@ -168,17 +232,19 @@ export interface ParametrosSugestao {
 }
 
 export async function calcularSugestaoCompra(params: ParametrosSugestao): Promise<SugestaoCompraResultado> {
-  const [produtos, sabores, ingredientesSabores, itensUniversais, grupos, fichasTecnicas] = await Promise.all([
+  const [produtos, sabores, ingredientesSabores, itensUniversais, grupos, fichasTecnicas, padroesEmbalagem] = await Promise.all([
     listProdutos({ ativo: true }),
     listSabores(),
     listTodosIngredientesSabores(),
     listItensUniversais(),
     listGruposSubstituicao(),
     listFichasTecnicas(),
+    listPadroesEmbalagem(),
   ]);
 
   const produtoPorId = new Map(produtos.map((p) => [p.id, p]));
   const gruposPorId = new Map(grupos.map((g) => [g.id, g]));
+  const padroesPorProdutoId = new Map(padroesEmbalagem.map((p) => [p.produto_id, p]));
   const fichasPorManipulado = new Map<string, typeof fichasTecnicas>();
   for (const f of fichasTecnicas) {
     const lista = fichasPorManipulado.get(f.produto_manipulado_id) ?? [];
@@ -277,15 +343,22 @@ export async function calcularSugestaoCompra(params: ParametrosSugestao): Promis
   await acumularRefrigerante(acumulador, produtos, grupos, params.qtdPizzasBasilico, params.qtdPizzasPopulares);
 
   // ── 5) Explode manipulados em insumos brutos (sempre 1 nível — ver premissa 6)
+  // somarBruto recebe a quantidade na unidade da RECEITA (kg, quase
+  // sempre) e converte pra unidade de estoque do produto aqui dentro —
+  // cobre tanto uso direto de bruto quanto o resultado da explosão de
+  // manipulado, que também é sempre expresso em kg pela ficha técnica
+  // (ver premissa 8 / paraUnidadeDoEstoque).
   const necessidadeBruto = new Map<string, { unidade: string; quantidade: number; motivos: Set<string> }>();
-  const somarBruto = (id: string, qtd: number, unidade: string, motivo: string) => {
-    if (qtd <= 0) return;
+  const somarBruto = (id: string, qtdNaUnidadeReceita: number, unidadeReceita: string, motivo: string) => {
+    if (qtdNaUnidadeReceita <= 0) return;
+    const produto = produtoPorId.get(id);
+    const { quantidade, unidade } = paraUnidadeDoEstoque(qtdNaUnidadeReceita, unidadeReceita, produto, padroesPorProdutoId);
     const atual = necessidadeBruto.get(id);
     if (atual) {
-      atual.quantidade += qtd;
+      atual.quantidade += quantidade;
       atual.motivos.add(motivo);
     } else {
-      necessidadeBruto.set(id, { unidade, quantidade: qtd, motivos: new Set([motivo]) });
+      necessidadeBruto.set(id, { unidade, quantidade, motivos: new Set([motivo]) });
     }
   };
 
@@ -313,7 +386,7 @@ export async function calcularSugestaoCompra(params: ParametrosSugestao): Promis
     if (!ficha || ficha.length === 0) {
       // Sem ficha técnica cadastrada — não dá pra explodir. Mantém o
       // manipulado listado direto (com aviso) em vez de sumir do relatório.
-      const padrao = await getPadraoEmbalagem(acc.refId);
+      const padrao = padroesPorProdutoId.get(acc.refId) ?? null;
       itens.push(
         resolverItem({
           id: acc.refId,
@@ -346,7 +419,7 @@ export async function calcularSugestaoCompra(params: ParametrosSugestao): Promis
   // ── 6) Resolve os insumos brutos (uso direto + explodidos de manipulados)
   for (const [id, dados] of necessidadeBruto) {
     const produto = produtoPorId.get(id);
-    const padrao = await getPadraoEmbalagem(id);
+    const padrao = padroesPorProdutoId.get(id) ?? null;
     itens.push(
       resolverItem({
         id,

@@ -10,6 +10,7 @@ const mockListIngredientes = db.listTodosIngredientesSabores as jest.MockedFunct
 const mockListItensUniversais = db.listItensUniversais as jest.MockedFunction<typeof db.listItensUniversais>;
 const mockListGrupos = db.listGruposSubstituicao as jest.MockedFunction<typeof db.listGruposSubstituicao>;
 const mockListFichas = db.listFichasTecnicas as jest.MockedFunction<typeof db.listFichasTecnicas>;
+const mockListPadroes = db.listPadroesEmbalagem as jest.MockedFunction<typeof db.listPadroesEmbalagem>;
 const mockGetMembrosGrupo = db.getMembrosGrupo as jest.MockedFunction<typeof db.getMembrosGrupo>;
 const mockGetPadrao = db.getPadraoEmbalagem as jest.MockedFunction<typeof db.getPadraoEmbalagem>;
 const mockCriarMeta = db.criarMetaProducao as jest.MockedFunction<typeof db.criarMetaProducao>;
@@ -54,6 +55,7 @@ function setupMocksBasicos() {
   mockListItensUniversais.mockResolvedValue(itensUniversais);
   mockListGrupos.mockResolvedValue([]);
   mockListFichas.mockResolvedValue([]);
+  mockListPadroes.mockResolvedValue([]);
   mockGetMembrosGrupo.mockResolvedValue([]);
   mockGetPadrao.mockResolvedValue(null);
   mockCriarMeta.mockResolvedValue({
@@ -323,7 +325,7 @@ describe("calcularSugestaoCompra — padrão de embalagem", () => {
       multiplo_minimo: null,
       ativo: true,
     };
-    mockGetPadrao.mockImplementation(async (produtoId: string) => (produtoId === queijo.id ? padrao : null));
+    mockListPadroes.mockResolvedValue([padrao]);
 
     // necessário: 0.2kg * 30 pizzas = 6kg, estoque 0 -> falta 6kg -> arredonda pra 8kg (múltiplo de 4)
     // queijo é manipulado sem ficha cadastrada -> cai no fallback, que também aplica padrão de embalagem
@@ -332,6 +334,48 @@ describe("calcularSugestaoCompra — padrão de embalagem", () => {
     expect(queijoItem.falta).toBe(6);
     expect(queijoItem.sugestaoArredondada).toBe(8);
     expect(queijoItem.origemPadrao).toBe(padrao.nome_padrao);
+  });
+
+  it("converte kg da receita pra unidade discreta de estoque (bisnaga) e arredonda pro inteiro, nunca fração", async () => {
+    // produto tracked em "bisnaga" (~1,5kg cada), receita pede em kg
+    const requeijao = produto({ id: "req", nome: "Requeijão Genérico", unidade: "bisnaga", estoque_atual: 0 });
+    mockListProdutos.mockResolvedValue([...produtos, requeijao]);
+    mockListPadroes.mockResolvedValue([
+      { id: "pr1", produto_id: requeijao.id, nome_padrao: "Bisnaga 1,5kg", unidades_por_padrao: 1, peso_ou_volume_por_unidade: 1.5, multiplo_minimo: null, ativo: true },
+    ]);
+    mockListSabores.mockResolvedValue([
+      { id: "s1", nome: "Sabor com requeijão", tipo: "piso_seguranca", categoria: "salgada", piso_minimo_pizzas: 4, queijo_override_kg: null, ativo: true, observacoes: null },
+    ]);
+    // 0.09kg por pizza * 4 = 0.36kg necessários -> 0.36/1.5 = 0.24 bisnaga -> arredonda pra 1 bisnaga inteira
+    mockListIngredientes.mockResolvedValue([
+      { id: "i1", sabor_id: "s1", produto_id: requeijao.id, grupo_substituicao_id: null, quantidade: 0.09, unidade: "kg" },
+    ]);
+
+    const resultado = await calcularSugestaoCompra({ qtdPizzasBasilico: 0, qtdPizzasPopulares: 0, registrarMeta: false });
+    const item = resultado.itens.find((i) => i.produtoNome === "Requeijão Genérico")!;
+
+    expect(item.unidade).toBe("bisnaga");
+    expect(item.sugestaoArredondada).toBe(1); // nunca "0,24 bisnaga"
+    expect(Number.isInteger(item.sugestaoArredondada)).toBe(true);
+  });
+
+  it("item solto sem padrão cadastrado arredonda pro inteiro mais próximo pra cima (nunca fração)", async () => {
+    const tomate = produto({ id: "tomate", nome: "Tomate", unidade: "kg", estoque_atual: 0 });
+    mockListProdutos.mockResolvedValue([...produtos, tomate]);
+    mockListSabores.mockResolvedValue([
+      { id: "s1", nome: "Sabor com tomate", tipo: "piso_seguranca", categoria: "salgada", piso_minimo_pizzas: 4, queijo_override_kg: null, ativo: true, observacoes: null },
+    ]);
+    // 0.35kg * 4 = 1.4kg necessários, sem padrão -> arredonda pra 2kg (inteiro pra cima)
+    mockListIngredientes.mockResolvedValue([
+      { id: "i1", sabor_id: "s1", produto_id: tomate.id, grupo_substituicao_id: null, quantidade: 0.35, unidade: "kg" },
+    ]);
+
+    const resultado = await calcularSugestaoCompra({ qtdPizzasBasilico: 0, qtdPizzasPopulares: 0, registrarMeta: false });
+    const item = resultado.itens.find((i) => i.produtoNome === "Tomate")!;
+
+    expect(item.falta).toBeCloseTo(1.4);
+    expect(item.sugestaoArredondada).toBe(2);
+    expect(Number.isInteger(item.sugestaoArredondada)).toBe(true);
   });
 });
 

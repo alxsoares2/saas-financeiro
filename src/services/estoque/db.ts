@@ -125,6 +125,14 @@ export async function getPadraoEmbalagem(produtoId: string): Promise<PadraoEmbal
   return data as PadraoEmbalagem | null;
 }
 
+// Busca todos de uma vez (evita N round-trips quando o motor de sugestão
+// precisa checar conversão de unidade pra vários produtos durante o cálculo).
+export async function listPadroesEmbalagem(): Promise<PadraoEmbalagem[]> {
+  const { data, error } = await client().from("padroes_embalagem").select("*").eq("ativo", true);
+  if (error) throw new Error(`Erro ao listar padrões de embalagem: ${error.message}`);
+  return (data ?? []) as PadraoEmbalagem[];
+}
+
 export async function upsertPadraoEmbalagem(padrao: Omit<PadraoEmbalagem, "id" | "ativo"> & { ativo?: boolean }): Promise<void> {
   const { error } = await client().from("padroes_embalagem").insert({ ...padrao, ativo: padrao.ativo ?? true });
   if (error) throw new Error(`Erro ao criar padrão de embalagem: ${error.message}`);

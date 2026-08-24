@@ -5,37 +5,46 @@ function brl(v: number): string {
   return v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+// Quantos itens cabem confortavelmente numa página A4 com essa tabela —
+// usado só pra decidir onde cortar as páginas do PDF (ver premissa de
+// paginação abaixo). Ajustar se a fonte/linha mudar de tamanho.
+const ITENS_POR_PAGINA = 22;
+
 function linhaTabela(item: SugestaoCompraResultado["itens"][number]): string {
-  const semFalta = item.falta <= 0;
   return `
-    <tr class="${semFalta ? "ok" : "falta"}">
+    <tr class="falta">
       <td class="desc">${item.produtoNome}${item.isPool ? ' <span class="pool">pool</span>' : ""}</td>
       <td class="num">${brl(item.estoqueAtual)}</td>
       <td class="num">${brl(item.necessario)}</td>
-      <td class="num destaque">${semFalta ? "—" : brl(item.sugestaoArredondada)}</td>
+      <td class="num destaque">${brl(item.sugestaoArredondada)}</td>
       <td class="unidade">${item.unidade}</td>
-      <td class="num">${semFalta ? "—" : item.valorEstimado != null ? `R$ ${brl(item.valorEstimado)}` : "?"}</td>
+      <td class="num">${item.precoUnitario != null ? `R$ ${brl(item.precoUnitario)}` : "?"}</td>
+      <td class="num destaque">${item.valorEstimado != null ? `R$ ${brl(item.valorEstimado)}` : "?"}</td>
       <td class="motivo">${item.motivo}</td>
     </tr>`;
 }
 
-function gerarHtml(resultado: SugestaoCompraResultado): string {
-  const { meta, itens, valorTotalEstimado, itensComPrecoDesconhecido } = resultado;
-  const linhas = itens.map(linhaTabela).join("");
-  const totalFaltando = itens.filter((i) => i.falta > 0).length;
+const CABECALHO_TABELA = `
+    <tr>
+      <th>Produto</th>
+      <th style="text-align:right">Estoque</th>
+      <th style="text-align:right">Necessário</th>
+      <th style="text-align:right">Comprar</th>
+      <th>Unidade</th>
+      <th style="text-align:right">Valor unit.</th>
+      <th style="text-align:right">Valor total</th>
+      <th>Motivo</th>
+    </tr>`;
 
-  return `<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-<meta charset="UTF-8">
-<style>
+function estiloComumSugestao(): string {
+  return `
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
-    font-size: 12px;
+    font-size: 11px;
     background: #f1f5f9;
     color: #1e293b;
-    padding: 28px;
+    padding: 24px;
   }
   .header {
     background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
@@ -54,6 +63,7 @@ function gerarHtml(resultado: SugestaoCompraResultado): string {
     padding: 6px 14px;
     font-weight: 700;
   }
+  .pagina-label { font-size: 11px; color: #64748b; font-weight: 700; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
   .wrap {
     background: white;
     border-radius: 14px;
@@ -62,66 +72,114 @@ function gerarHtml(resultado: SugestaoCompraResultado): string {
   }
   table { width: 100%; border-collapse: collapse; }
   thead th {
-    padding: 10px 12px;
+    padding: 8px 10px;
     background: #f8fafc;
     border-bottom: 2px solid #e2e8f0;
-    font-size: 10px;
+    font-size: 9px;
     color: #64748b;
     text-transform: uppercase;
     letter-spacing: 0.5px;
     text-align: left;
   }
-  td { padding: 8px 12px; border-bottom: 1px solid #f1f5f9; font-size: 12px; }
+  td { padding: 6px 10px; border-bottom: 1px solid #f1f5f9; font-size: 11px; }
   td.num { text-align: right; font-variant-numeric: tabular-nums; }
   td.destaque { font-weight: 700; }
   tr.falta td.destaque { color: #dc2626; }
-  tr.ok td.destaque { color: #94a3b8; }
   .pool { font-size: 9px; background: #e0e7ff; color: #4338ca; padding: 1px 6px; border-radius: 4px; margin-left: 4px; }
-  .motivo { color: #64748b; font-size: 10px; }
-  tr.total td { padding: 10px 12px; font-weight: 800; font-size: 13px; border-top: 2px solid #1e293b; }
+  .motivo { color: #64748b; font-size: 9px; }
+  tr.subtotal td { padding: 8px 10px; font-weight: 700; font-size: 11px; border-top: 2px solid #cbd5e1; color: #475569; }
+  .pagina { page-break-after: always; }
+  .pagina:last-child { page-break-after: auto; }
+  .total-geral {
+    margin-top: 18px;
+    background: #1e293b;
+    color: white;
+    border-radius: 14px;
+    padding: 18px 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+  }
+  .total-geral-label { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.85; }
+  .total-geral-valor { font-size: 24px; font-weight: 800; }
+  .total-geral-nota { font-size: 10px; opacity: 0.75; margin-top: 4px; }
   .rodape { margin-top: 16px; text-align: center; font-size: 10px; color: #94a3b8; }
-</style>
+  `;
+}
+
+function gerarHtml(resultado: SugestaoCompraResultado): string {
+  const { meta, itens, valorTotalEstimado, itensComPrecoDesconhecido } = resultado;
+  const comFalta = itens.filter((i) => i.falta > 0);
+
+  // Paginação manual (em vez de deixar o quebra-página automático do
+  // navegador cortar a tabela no meio): cada página carrega só os itens
+  // dela, com um subtotal PRÓPRIO no rodapé da tabela — nunca o total
+  // geral repetido em todo canto. O Total Geral só aparece uma vez, no
+  // fim da última página, visualmente destacado do subtotal de página.
+  const paginas: (typeof comFalta)[] = [];
+  for (let i = 0; i < comFalta.length; i += ITENS_POR_PAGINA) {
+    paginas.push(comFalta.slice(i, i + ITENS_POR_PAGINA));
+  }
+  if (paginas.length === 0) paginas.push([]);
+
+  const headerPrincipal = `
+    <div class="header">
+      <div class="h1" style="font-size:22px;font-weight:700;color:white">SUGESTÃO DE COMPRA — ESTOQUE</div>
+      <div class="meta">
+        Basílico: ${meta.qtdPizzasBasilico} pizzas &nbsp;·&nbsp; Populares: ${meta.qtdPizzasPopulares} pizzas
+        ${meta.validoAte ? `&nbsp;·&nbsp; válido até ${meta.validoAte}` : ""}
+      </div>
+      <div class="badge">${comFalta.length} ${comFalta.length === 1 ? "item precisa" : "itens precisam"} de compra${paginas.length > 1 ? ` · ${paginas.length} páginas` : ""}</div>
+    </div>`;
+
+  const blocosPaginas = paginas
+    .map((itensPagina, idx) => {
+      const isPrimeira = idx === 0;
+      const isUltima = idx === paginas.length - 1;
+      const subtotalPagina = itensPagina.reduce((s, i) => s + (i.valorEstimado ?? 0), 0);
+      const linhas = itensPagina.map(linhaTabela).join("");
+      const corpoTabela =
+        linhas || `<tr><td colspan="8" style="text-align:center;padding:24px;color:#94a3b8">✅ Estoque cobre a meta pedida — nenhuma compra necessária.</td></tr>`;
+
+      return `
+      <div class="pagina">
+        ${isPrimeira ? headerPrincipal : `<div class="pagina-label">Sugestão de compra — página ${idx + 1} de ${paginas.length} (continuação)</div>`}
+        <div class="wrap">
+          <table>
+            <thead>${CABECALHO_TABELA}</thead>
+            <tbody>${corpoTabela}</tbody>
+            ${
+              itensPagina.length > 0
+                ? `<tfoot><tr class="subtotal"><td colspan="6">SUBTOTAL DESTA PÁGINA (${itensPagina.length} ${itensPagina.length === 1 ? "item" : "itens"})</td><td class="num" colspan="2">R$ ${brl(subtotalPagina)}</td></tr></tfoot>`
+                : ""
+            }
+          </table>
+        </div>
+        ${
+          isUltima && comFalta.length > 0
+            ? `
+        <div class="total-geral">
+          <div>
+            <div class="total-geral-label">Total Geral — todas as páginas</div>
+            ${itensComPrecoDesconhecido > 0 ? `<div class="total-geral-nota">${itensComPrecoDesconhecido} item(ns) sem preço cadastrado, não incluído(s)</div>` : ""}
+          </div>
+          <div class="total-geral-valor">R$ ${brl(valorTotalEstimado)}</div>
+        </div>`
+            : ""
+        }
+        ${isUltima ? `<div class="rodape">Gerado em ${new Date().toLocaleString("pt-BR")} · Sugestão automática — decisão final é do time</div>` : ""}
+      </div>`;
+    })
+    .join("");
+
+  return `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<style>${estiloComumSugestao()}</style>
 </head>
 <body>
-
-<div class="header">
-  <div class="h1" style="font-size:22px;font-weight:700;color:white">SUGESTÃO DE COMPRA — ESTOQUE</div>
-  <div class="meta">
-    Basílico: ${meta.qtdPizzasBasilico} pizzas &nbsp;·&nbsp; Populares: ${meta.qtdPizzasPopulares} pizzas
-    ${meta.validoAte ? `&nbsp;·&nbsp; válido até ${meta.validoAte}` : ""}
-  </div>
-  <div class="badge">${totalFaltando} ${totalFaltando === 1 ? "item precisa" : "itens precisam"} de compra ${totalFaltando > 0 ? `· R$ ${brl(valorTotalEstimado)}` : ""}</div>
-</div>
-
-<div class="wrap">
-  <table>
-    <thead>
-      <tr>
-        <th>Produto</th>
-        <th style="text-align:right">Estoque</th>
-        <th style="text-align:right">Necessário</th>
-        <th style="text-align:right">Comprar</th>
-        <th>Unidade</th>
-        <th style="text-align:right">Valor</th>
-        <th>Motivo</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${linhas}
-    </tbody>
-    ${
-      totalFaltando > 0
-        ? `<tfoot><tr class="total"><td colspan="5">TOTAL ESTIMADO</td><td class="num">R$ ${brl(valorTotalEstimado)}</td><td></td></tr></tfoot>`
-        : ""
-    }
-  </table>
-</div>
-
-<div class="rodape">
-  Gerado em ${new Date().toLocaleString("pt-BR")} · Sugestão automática — decisão final é do time
-  ${itensComPrecoDesconhecido > 0 ? `<br>${itensComPrecoDesconhecido} item(ns) sem preço cadastrado, não incluído(s) no total` : ""}
-</div>
-
+${blocosPaginas}
 </body>
 </html>`;
 }
