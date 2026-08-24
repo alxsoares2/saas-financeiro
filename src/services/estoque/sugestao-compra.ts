@@ -23,11 +23,29 @@
 // 4. Piso mínimo padrão pra sabores piso_seguranca não-doce é 4 pizzas
 //    (spec diz "3-4", ficamos com o teto pra manter a margem de segurança
 //    já usada em outras regras da spec). Grupo doce usa 5 (seção 6).
+// 5. Ingrediente de piso de segurança compartilhado por 2+ sabores: em vez
+//    de somar a contribuição (qtd_por_pizza × piso) de cada sabor, usa a
+//    MEDIANA dessas contribuições × 1,5 — soma pura superestima muito
+//    quando vários sabores de baixo giro dividem o mesmo insumo (não são
+//    todos feitos no piso máximo ao mesmo tempo). Ingrediente usado por
+//    um único sabor mantém a soma direta (== o próprio valor).
+// 6. Produto tipo='manipulado' nunca aparece como sugestão de compra
+//    direta — a falta dele (necessário + estoque_minimo − estoque_atual)
+//    é explodida via fichas_tecnicas nos insumos brutos correspondentes,
+//    que entram no relatório em vez do manipulado. Confirmado com o
+//    cliente: nunca há manipulado que depende de outro manipulado, então
+//    a explosão é sempre de 1 nível só (sem recursão). Manipulado sem
+//    ficha técnica cadastrada é um fallback — fica listado direto, com
+//    aviso, em vez de sumir silenciosamente do relatório.
+// 7. Valor estimado por item = preco_unitario (cadastrado em produtos) ×
+//    quantidade sugerida (já arredondada pelo padrão de embalagem). Pool
+//    usa o preco_unitario do membro mais barato (mesma lógica já usada
+//    pra escolher o refrigerante popular). Item sem preço cadastrado não
+//    entra no total (fica contado em itensComPrecoDesconhecido).
 import {
   criarMetaProducao,
   getMembrosGrupo,
   getPadraoEmbalagem,
-  getProdutoPorId,
   listFichasTecnicas,
   listGruposSubstituicao,
   listItensUniversais,
@@ -42,7 +60,7 @@ import {
   NecessidadeInsumo,
   PadraoEmbalagem,
   Produto,
-  Sabor,
+  RefInsumo,
   SaborIngrediente,
   SugestaoCompraResultado,
 } from "./types.js";
@@ -52,6 +70,7 @@ export const REFRIGERANTE_POPULARES_PCT_DAS_PIZZAS = 0.7;
 export const REFRIGERANTE_BASILICO_PROPORCAO_ZERO = 1 / 3; // 2:1 normal:zero
 export const PISO_MINIMO_PADRAO_PIZZAS = 4;
 export const PISO_MINIMO_DOCE_PIZZAS = 5;
+export const MARGEM_INGREDIENTE_COMPARTILHADO = 1.5;
 
 interface Acumulador {
   chave: string; // "produto:<id>" ou "grupo:<id>"
@@ -62,11 +81,11 @@ interface Acumulador {
   motivos: Set<string>;
 }
 
-function chaveDe(ref: { produto_id: string | null; grupo_substituicao_id: string | null }): string {
+function chaveDe(ref: RefInsumo): string {
   return ref.produto_id ? `produto:${ref.produto_id}` : `grupo:${ref.grupo_substituicao_id}`;
 }
 
-function acumular(mapa: Map<string, Acumulador>, ref: { produto_id: string | null; grupo_substituicao_id: string | null }, qtd: number, unidade: string, motivo: string) {
+function acumular(mapa: Map<string, Acumulador>, ref: RefInsumo, qtd: number, unidade: string, motivo: string) {
   if (qtd <= 0) return;
   const chave = chaveDe(ref);
   const existente = mapa.get(chave);
@@ -85,6 +104,12 @@ function acumular(mapa: Map<string, Acumulador>, ref: { produto_id: string | nul
   }
 }
 
+function mediana(valores: number[]): number {
+  const ordenados = [...valores].sort((a, b) => a - b);
+  const meio = Math.floor(ordenados.length / 2);
+  return ordenados.length % 2 !== 0 ? ordenados[meio] : (ordenados[meio - 1] + ordenados[meio]) / 2;
+}
+
 function arredondarCompra(falta: number, padrao: PadraoEmbalagem | null): { quantidade: number; origemPadrao?: string } {
   if (falta <= 0) return { quantidade: 0 };
   if (!padrao || !padrao.peso_ou_volume_por_unidade) return { quantidade: falta };
@@ -97,6 +122,42 @@ function arredondarCompra(falta: number, padrao: PadraoEmbalagem | null): { quan
   return { quantidade: unidades * tamanhoUnidade, origemPadrao: padrao.nome_padrao };
 }
 
+// Monta a linha final do relatório (falta + arredondamento + valor
+// estimado) — usado tanto pra insumos brutos quanto pra pools e pro
+// fallback de manipulado sem ficha técnica.
+function resolverItem(params: {
+  id: string;
+  nome: string;
+  unidade: string;
+  isPool: boolean;
+  necessarioBase: number; // ainda sem o colchão de estoque_minimo
+  colchao: number; // estoque_minimo a somar (0 pra pool — não tem um único produto)
+  motivos: string[];
+  estoqueAtual: number;
+  padrao: PadraoEmbalagem | null;
+  precoUnitario: number | null;
+}): NecessidadeInsumo {
+  const necessario = params.necessarioBase + params.colchao;
+  const falta = Math.max(necessario - params.estoqueAtual, 0);
+  const { quantidade: sugestaoArredondada, origemPadrao } = arredondarCompra(falta, params.padrao);
+  const valorEstimado = params.precoUnitario != null ? round(params.precoUnitario * sugestaoArredondada) : null;
+
+  return {
+    produtoId: params.id,
+    produtoNome: params.nome,
+    unidade: params.unidade,
+    isPool: params.isPool,
+    necessario: round(necessario),
+    estoqueAtual: round(params.estoqueAtual),
+    falta: round(falta),
+    sugestaoArredondada: round(sugestaoArredondada),
+    origemPadrao,
+    motivo: params.motivos.join(" + "),
+    precoUnitario: params.precoUnitario,
+    valorEstimado,
+  };
+}
+
 export interface ParametrosSugestao {
   qtdPizzasBasilico: number;
   qtdPizzasPopulares: number;
@@ -107,16 +168,23 @@ export interface ParametrosSugestao {
 }
 
 export async function calcularSugestaoCompra(params: ParametrosSugestao): Promise<SugestaoCompraResultado> {
-  const [produtos, sabores, ingredientesSabores, itensUniversais, grupos] = await Promise.all([
+  const [produtos, sabores, ingredientesSabores, itensUniversais, grupos, fichasTecnicas] = await Promise.all([
     listProdutos({ ativo: true }),
     listSabores(),
     listTodosIngredientesSabores(),
     listItensUniversais(),
     listGruposSubstituicao(),
+    listFichasTecnicas(),
   ]);
 
   const produtoPorId = new Map(produtos.map((p) => [p.id, p]));
   const gruposPorId = new Map(grupos.map((g) => [g.id, g]));
+  const fichasPorManipulado = new Map<string, typeof fichasTecnicas>();
+  for (const f of fichasTecnicas) {
+    const lista = fichasPorManipulado.get(f.produto_manipulado_id) ?? [];
+    lista.push(f);
+    fichasPorManipulado.set(f.produto_manipulado_id, lista);
+  }
 
   // ── 1) Total de pizzas por categoria (salgada/doce) ──────────────────────
   // Salgada = meta principal (âncoras, por marca) + piso de segurança de
@@ -157,6 +225,9 @@ export async function calcularSugestaoCompra(params: ParametrosSugestao): Promis
   }
 
   // ── 3) Piso de segurança — ingredientes exclusivos de cada sabor não-âncora
+  // Ingrediente usado por um único sabor: soma direta (== o próprio valor).
+  // Ingrediente compartilhado por 2+ sabores: mediana das contribuições ×
+  // 1,5 em vez da soma (ver premissa 5).
   const ingredientesPorSabor = new Map<string, SaborIngrediente[]>();
   for (const ing of ingredientesSabores) {
     const lista = ingredientesPorSabor.get(ing.sabor_id) ?? [];
@@ -164,67 +235,170 @@ export async function calcularSugestaoCompra(params: ParametrosSugestao): Promis
     ingredientesPorSabor.set(ing.sabor_id, lista);
   }
 
+  interface ContribuicaoPiso {
+    ref: RefInsumo;
+    saborNome: string;
+    valor: number;
+    unidade: string;
+  }
+  const contribuicoesPorIngrediente = new Map<string, ContribuicaoPiso[]>();
+
   for (const sabor of pisoSabores) {
     const piso = sabor.piso_minimo_pizzas ?? (sabor.categoria === "doce" ? PISO_MINIMO_DOCE_PIZZAS : PISO_MINIMO_PADRAO_PIZZAS);
     const ingredientes = ingredientesPorSabor.get(sabor.id) ?? [];
     for (const ing of ingredientes) {
-      acumular(
-        acumulador,
-        { produto_id: ing.produto_id, grupo_substituicao_id: ing.grupo_substituicao_id },
-        ing.quantidade * piso,
-        ing.unidade,
-        `piso de segurança — ${sabor.nome} (mín. ${piso} pizzas)`
-      );
+      const ref: RefInsumo = { produto_id: ing.produto_id, grupo_substituicao_id: ing.grupo_substituicao_id };
+      const chave = chaveDe(ref);
+      const lista = contribuicoesPorIngrediente.get(chave) ?? [];
+      lista.push({ ref, saborNome: sabor.nome, valor: ing.quantidade * piso, unidade: ing.unidade });
+      contribuicoesPorIngrediente.set(chave, lista);
     }
+  }
+
+  for (const contribs of contribuicoesPorIngrediente.values()) {
+    if (contribs.length === 1) {
+      const c = contribs[0];
+      acumular(acumulador, c.ref, c.valor, c.unidade, `piso de segurança — ${c.saborNome}`);
+      continue;
+    }
+
+    const valorFinal = mediana(contribs.map((c) => c.valor)) * MARGEM_INGREDIENTE_COMPARTILHADO;
+    const nomesSabores = contribs.map((c) => c.saborNome).join(", ");
+    acumular(
+      acumulador,
+      contribs[0].ref,
+      valorFinal,
+      contribs[0].unidade,
+      `piso de segurança — compartilhado entre ${contribs.length} sabores (mediana ×1,5): ${nomesSabores}`
+    );
   }
 
   // ── 4) Refrigerante ───────────────────────────────────────────────────
   await acumularRefrigerante(acumulador, produtos, grupos, params.qtdPizzasBasilico, params.qtdPizzasPopulares);
 
-  // ── 5) Resolve estoque atual + arredondamento de compra por item ────────
-  const itens: NecessidadeInsumo[] = [];
-  for (const acc of acumulador.values()) {
-    let nome: string;
-    let unidadeFinal = acc.unidade;
-    let estoqueAtual = 0;
-    let padrao: PadraoEmbalagem | null = null;
-
-    if (acc.isPool) {
-      const grupo = gruposPorId.get(acc.refId);
-      nome = grupo?.nome ?? "Grupo desconhecido";
-      const membros = await getMembrosGrupo(acc.refId);
-      estoqueAtual = membros.reduce((acc2, m) => acc2 + Number(m.estoque_atual), 0);
-      // Pool não tem um único padrão de embalagem — decisão de qual
-      // variante comprar fica com o time (spec seção 8).
+  // ── 5) Explode manipulados em insumos brutos (sempre 1 nível — ver premissa 6)
+  const necessidadeBruto = new Map<string, { unidade: string; quantidade: number; motivos: Set<string> }>();
+  const somarBruto = (id: string, qtd: number, unidade: string, motivo: string) => {
+    if (qtd <= 0) return;
+    const atual = necessidadeBruto.get(id);
+    if (atual) {
+      atual.quantidade += qtd;
+      atual.motivos.add(motivo);
     } else {
-      const produto = produtoPorId.get(acc.refId) ?? (await getProdutoPorId(acc.refId));
-      nome = produto?.nome ?? "Produto desconhecido";
-      estoqueAtual = Number(produto?.estoque_atual ?? 0);
-      const minimo = Number(produto?.estoque_minimo ?? 0);
-      estoqueAtual = estoqueAtual; // estoque_minimo é somado como colchão abaixo
-      padrao = await getPadraoEmbalagem(acc.refId);
-      // soma o estoque_minimo como colchão de segurança na necessidade
-      acc.necessario += minimo;
+      necessidadeBruto.set(id, { unidade, quantidade: qtd, motivos: new Set([motivo]) });
+    }
+  };
+
+  const itens: NecessidadeInsumo[] = [];
+
+  for (const acc of acumulador.values()) {
+    if (acc.isPool) continue; // pools resolvidos separadamente abaixo
+
+    const produto = produtoPorId.get(acc.refId);
+    if (!produto) continue; // produto sumiu/inativo — ignora
+
+    if (produto.tipo !== "manipulado") {
+      somarBruto(acc.refId, acc.necessario, acc.unidade, Array.from(acc.motivos).join(" + "));
+      continue;
     }
 
-    const falta = Math.max(acc.necessario - estoqueAtual, 0);
-    const { quantidade: sugestaoArredondada, origemPadrao } = arredondarCompra(falta, padrao);
+    // É manipulado: calcula a própria falta (com colchão de estoque_minimo)
+    // pra saber quanto precisa ser PRODUZIDO — só isso vira demanda de
+    // insumo bruto, não a necessidade bruta toda (o que já está em
+    // estoque como manipulado não precisa ser reproduzido).
+    const faltaManipulado = Math.max(acc.necessario + Number(produto.estoque_minimo) - Number(produto.estoque_atual), 0);
+    if (faltaManipulado <= 0) continue; // estoque do manipulado já cobre
 
-    itens.push({
-      produtoId: acc.refId,
-      produtoNome: nome,
-      unidade: unidadeFinal,
-      isPool: acc.isPool,
-      necessario: round(acc.necessario),
-      estoqueAtual: round(estoqueAtual),
-      falta: round(falta),
-      sugestaoArredondada: round(sugestaoArredondada),
-      origemPadrao,
-      motivo: Array.from(acc.motivos).join(" + "),
-    });
+    const ficha = fichasPorManipulado.get(acc.refId);
+    if (!ficha || ficha.length === 0) {
+      // Sem ficha técnica cadastrada — não dá pra explodir. Mantém o
+      // manipulado listado direto (com aviso) em vez de sumir do relatório.
+      const padrao = await getPadraoEmbalagem(acc.refId);
+      itens.push(
+        resolverItem({
+          id: acc.refId,
+          nome: produto.nome,
+          unidade: acc.unidade,
+          isPool: false,
+          necessarioBase: acc.necessario,
+          colchao: Number(produto.estoque_minimo),
+          estoqueAtual: Number(produto.estoque_atual),
+          padrao,
+          precoUnitario: produto.preco_unitario != null ? Number(produto.preco_unitario) : null,
+          motivos: [...Array.from(acc.motivos), "⚠️ sem ficha técnica cadastrada — sugestão direta do manipulado"],
+        })
+      );
+      continue;
+    }
+
+    for (const f of ficha) {
+      const brutoProduto = produtoPorId.get(f.produto_bruto_id);
+      const qtdBruto = faltaManipulado * Number(f.quantidade_bruto_por_unidade);
+      somarBruto(
+        f.produto_bruto_id,
+        qtdBruto,
+        brutoProduto?.unidade ?? acc.unidade,
+        `produção de ${produto.nome} (falta ${round(faltaManipulado)}${produto.unidade})`
+      );
+    }
+  }
+
+  // ── 6) Resolve os insumos brutos (uso direto + explodidos de manipulados)
+  for (const [id, dados] of necessidadeBruto) {
+    const produto = produtoPorId.get(id);
+    const padrao = await getPadraoEmbalagem(id);
+    itens.push(
+      resolverItem({
+        id,
+        nome: produto?.nome ?? "Produto desconhecido",
+        unidade: produto?.unidade ?? dados.unidade,
+        isPool: false,
+        necessarioBase: dados.quantidade,
+        colchao: Number(produto?.estoque_minimo ?? 0),
+        estoqueAtual: Number(produto?.estoque_atual ?? 0),
+        padrao,
+        precoUnitario: produto?.preco_unitario != null ? Number(produto.preco_unitario) : null,
+        motivos: Array.from(dados.motivos),
+      })
+    );
+  }
+
+  // ── 7) Resolve os pools (grupos de substituição) ─────────────────────
+  for (const acc of acumulador.values()) {
+    if (!acc.isPool) continue;
+
+    const grupo = gruposPorId.get(acc.refId);
+    const membros = await getMembrosGrupo(acc.refId);
+    const estoqueAtual = membros.reduce((s, m) => s + Number(m.estoque_atual), 0);
+    const precosValidos = membros.filter((m) => m.preco_unitario != null).map((m) => Number(m.preco_unitario));
+    const precoUnitario = precosValidos.length > 0 ? Math.min(...precosValidos) : null;
+
+    itens.push(
+      resolverItem({
+        id: acc.refId,
+        nome: grupo?.nome ?? "Grupo desconhecido",
+        unidade: acc.unidade,
+        isPool: true,
+        necessarioBase: acc.necessario,
+        colchao: 0, // pool não tem um único produto com estoque_minimo próprio
+        estoqueAtual,
+        padrao: null, // decisão de qual variante comprar fica com o time (spec seção 8)
+        precoUnitario,
+        motivos: Array.from(acc.motivos),
+      })
+    );
   }
 
   itens.sort((a, b) => b.falta - a.falta);
+
+  // ── 8) Valor total estimado ──────────────────────────────────────────
+  let valorTotalEstimado = 0;
+  let itensComPrecoDesconhecido = 0;
+  for (const item of itens) {
+    if (item.falta <= 0) continue;
+    if (item.valorEstimado != null) valorTotalEstimado += item.valorEstimado;
+    else itensComPrecoDesconhecido++;
+  }
 
   if (params.registrarMeta !== false) {
     await criarMetaProducao({
@@ -243,6 +417,8 @@ export async function calcularSugestaoCompra(params: ParametrosSugestao): Promis
       qtdPizzasPopulares: params.qtdPizzasPopulares,
     },
     itens,
+    valorTotalEstimado: round(valorTotalEstimado),
+    itensComPrecoDesconhecido,
   };
 }
 
@@ -306,7 +482,7 @@ function brl(v: number): string {
 }
 
 export function formatarSugestaoWhatsApp(resultado: SugestaoCompraResultado): string {
-  const { meta, itens } = resultado;
+  const { meta, itens, valorTotalEstimado, itensComPrecoDesconhecido } = resultado;
   const comFalta = itens.filter((i) => i.falta > 0);
 
   const linhas: string[] = [
@@ -321,12 +497,16 @@ export function formatarSugestaoWhatsApp(resultado: SugestaoCompraResultado): st
   } else {
     for (const item of comFalta) {
       const tag = item.isPool ? " _(pool — decidir variante)_" : "";
+      const valorTxt = item.valorEstimado != null ? ` — R$ ${brl(item.valorEstimado)}` : "";
       linhas.push(
-        `• *${item.produtoNome}*${tag}: comprar *${brl(item.sugestaoArredondada)} ${item.unidade}*` +
+        `• *${item.produtoNome}*${tag}: comprar *${brl(item.sugestaoArredondada)} ${item.unidade}*${valorTxt}` +
           (item.origemPadrao ? ` _(${item.origemPadrao})_` : "") +
           `\n   estoque: ${brl(item.estoqueAtual)} · necessário: ${brl(item.necessario)}`
       );
     }
+    linhas.push("");
+    const notaSemPreco = itensComPrecoDesconhecido > 0 ? ` _(${itensComPrecoDesconhecido} item(ns) sem preço cadastrado, não incluído(s))_` : "";
+    linhas.push(`*Total estimado: R$ ${brl(valorTotalEstimado)}*${notaSemPreco}`);
   }
 
   linhas.push("", "_Sugestão gerada automaticamente — decisão final é do time._");

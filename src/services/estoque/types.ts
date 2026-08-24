@@ -149,6 +149,8 @@ export interface NecessidadeInsumo {
   sugestaoArredondada: number; // depois de aplicar padrao_embalagem, se houver
   origemPadrao?: string;    // nome do padrão de embalagem aplicado, se houver
   motivo: string;
+  precoUnitario: number | null;   // produtos.preco_unitario (pool: preço do membro mais barato — estimativa)
+  valorEstimado: number | null;   // precoUnitario * sugestaoArredondada, null se preço desconhecido
 }
 
 export interface SugestaoCompraResultado {
@@ -158,4 +160,6 @@ export interface SugestaoCompraResultado {
     qtdPizzasPopulares: number;
   };
   itens: NecessidadeInsumo[];
+  valorTotalEstimado: number;      // soma de valorEstimado dos itens com falta > 0
+  itensComPrecoDesconhecido: number; // quantos itens com falta > 0 não entraram no total por falta de preço cadastrado
 }

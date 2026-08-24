@@ -1,6 +1,6 @@
 import { calcularSugestaoCompra, formatarSugestaoWhatsApp } from "../src/services/estoque/sugestao-compra";
 import * as db from "../src/services/estoque/db";
-import { GrupoSubstituicao, ItemUniversal, PadraoEmbalagem, Produto, Sabor, SaborIngrediente } from "../src/services/estoque/types";
+import { FichaTecnica, GrupoSubstituicao, ItemUniversal, PadraoEmbalagem, Produto, Sabor, SaborIngrediente } from "../src/services/estoque/types";
 
 jest.mock("../src/services/estoque/db");
 
@@ -9,9 +9,9 @@ const mockListSabores = db.listSabores as jest.MockedFunction<typeof db.listSabo
 const mockListIngredientes = db.listTodosIngredientesSabores as jest.MockedFunction<typeof db.listTodosIngredientesSabores>;
 const mockListItensUniversais = db.listItensUniversais as jest.MockedFunction<typeof db.listItensUniversais>;
 const mockListGrupos = db.listGruposSubstituicao as jest.MockedFunction<typeof db.listGruposSubstituicao>;
+const mockListFichas = db.listFichasTecnicas as jest.MockedFunction<typeof db.listFichasTecnicas>;
 const mockGetMembrosGrupo = db.getMembrosGrupo as jest.MockedFunction<typeof db.getMembrosGrupo>;
 const mockGetPadrao = db.getPadraoEmbalagem as jest.MockedFunction<typeof db.getPadraoEmbalagem>;
-const mockGetProdutoPorId = db.getProdutoPorId as jest.MockedFunction<typeof db.getProdutoPorId>;
 const mockCriarMeta = db.criarMetaProducao as jest.MockedFunction<typeof db.criarMetaProducao>;
 
 function produto(over: Partial<Produto> & { id: string; nome: string }): Produto {
@@ -53,9 +53,9 @@ function setupMocksBasicos() {
   mockListIngredientes.mockResolvedValue([]);
   mockListItensUniversais.mockResolvedValue(itensUniversais);
   mockListGrupos.mockResolvedValue([]);
+  mockListFichas.mockResolvedValue([]);
   mockGetMembrosGrupo.mockResolvedValue([]);
   mockGetPadrao.mockResolvedValue(null);
-  mockGetProdutoPorId.mockImplementation(async (id: string) => produtos.find((p) => p.id === id) ?? null);
   mockCriarMeta.mockResolvedValue({
     id: "meta-1",
     data: "2026-08-24",
@@ -114,41 +114,196 @@ describe("calcularSugestaoCompra — piso de segurança", () => {
     setupMocksBasicos();
   });
 
-  it("soma o piso mínimo de sabores não-âncora ao total de pizzas salgadas (item universal)", async () => {
-    const lombo = produto({ id: "lombo", nome: "Lombinho Canadense Fatiado", estoque_atual: 0 });
-    mockListProdutos.mockResolvedValue([...produtos, lombo]);
-
-    const sabor: Sabor = {
-      id: "s1",
-      nome: "Lombo c/ catupiry",
+  function sabor(over: Partial<Sabor> & { id: string; nome: string }): Sabor {
+    return {
       tipo: "piso_seguranca",
       categoria: "salgada",
       piso_minimo_pizzas: 4,
       queijo_override_kg: null,
       ativo: true,
       observacoes: null,
+      ...over,
     };
-    mockListSabores.mockResolvedValue([sabor]);
+  }
 
-    const ingrediente: SaborIngrediente = {
-      id: "i1",
-      sabor_id: "s1",
-      produto_id: lombo.id,
-      grupo_substituicao_id: null,
-      quantidade: 0.18,
-      unidade: "kg",
-    };
-    mockListIngredientes.mockResolvedValue([ingrediente]);
+  it("ingrediente usado por um único sabor: soma direta (qtd_por_pizza × piso)", async () => {
+    const lombo = produto({ id: "lombo", nome: "Lombinho Canadense Fatiado", estoque_atual: 0 });
+    // estoque de Massa zerado nesse teste pra deixar visível que o piso
+    // também aumenta a necessidade do item universal (com estoque cheio o
+    // item nem apareceria — falta zero não gera sugestão, ver describe
+    // "explosão de manipulado em brutos").
+    const massaSemEstoque = produto({ id: "massa", nome: "Massa de Pizza", unidade: "un", tipo: "manipulado", estoque_atual: 0 });
+    mockListProdutos.mockResolvedValue([massaSemEstoque, molho, queijo, caixaBasilico, lombo]);
+    mockListSabores.mockResolvedValue([sabor({ id: "s1", nome: "Lombo c/ catupiry", piso_minimo_pizzas: 4 })]);
+    mockListIngredientes.mockResolvedValue([
+      { id: "i1", sabor_id: "s1", produto_id: lombo.id, grupo_substituicao_id: null, quantidade: 0.18, unidade: "kg" },
+    ]);
 
     const resultado = await calcularSugestaoCompra({ qtdPizzasBasilico: 0, qtdPizzasPopulares: 0, registrarMeta: false });
 
-    // ingrediente exclusivo do piso: 0.18kg * 4 pizzas = 0.72kg
+    // 0.18kg * 4 pizzas = 0.72kg
     const lomboItem = resultado.itens.find((i) => i.produtoNome === lombo.nome)!;
     expect(lomboItem.necessario).toBeCloseTo(0.72);
 
     // universal (massa) também sobe: 0 da meta + 4 do piso = 4 unidades
+    // (sem ficha técnica cadastrada nesse teste -> fallback direto)
     const massaItem = resultado.itens.find((i) => i.produtoNome === "Massa de Pizza")!;
     expect(massaItem.necessario).toBe(4);
+  });
+
+  it("ingrediente compartilhado por 2+ sabores: mediana das contribuições × 1,5 (não soma)", async () => {
+    const bacon = produto({ id: "bacon", nome: "Bacon em Cubos", estoque_atual: 0 });
+    mockListProdutos.mockResolvedValue([...produtos, bacon]);
+
+    // 3 sabores usando bacon, cada um com piso e quantidade diferentes:
+    //   A: 0.16kg * 4 = 0.64
+    //   B: 0.09kg * 4 = 0.36
+    //   C: 0.16kg * 5 = 0.80  (piso maior, ex: grupo doce hipotético)
+    // mediana(0.64, 0.36, 0.80) = 0.64  →  0.64 * 1.5 = 0.96
+    mockListSabores.mockResolvedValue([
+      sabor({ id: "sA", nome: "Corn e Bacon", piso_minimo_pizzas: 4 }),
+      sabor({ id: "sB", nome: "Calabresa e Bacon", piso_minimo_pizzas: 4 }),
+      sabor({ id: "sC", nome: "Bacon Especial", piso_minimo_pizzas: 5 }),
+    ]);
+    mockListIngredientes.mockResolvedValue([
+      { id: "iA", sabor_id: "sA", produto_id: bacon.id, grupo_substituicao_id: null, quantidade: 0.16, unidade: "kg" },
+      { id: "iB", sabor_id: "sB", produto_id: bacon.id, grupo_substituicao_id: null, quantidade: 0.09, unidade: "kg" },
+      { id: "iC", sabor_id: "sC", produto_id: bacon.id, grupo_substituicao_id: null, quantidade: 0.16, unidade: "kg" },
+    ]);
+
+    const resultado = await calcularSugestaoCompra({ qtdPizzasBasilico: 0, qtdPizzasPopulares: 0, registrarMeta: false });
+    const baconItem = resultado.itens.find((i) => i.produtoNome === bacon.nome)!;
+
+    expect(baconItem.necessario).toBeCloseTo(0.96);
+    expect(baconItem.motivo).toContain("compartilhado entre 3 sabores");
+    expect(baconItem.motivo).toContain("mediana");
+  });
+});
+
+describe("calcularSugestaoCompra — explosão de manipulado em brutos", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    setupMocksBasicos();
+  });
+
+  it("substitui o manipulado pelos insumos brutos da ficha técnica, proporcional à falta", async () => {
+    // Farinha: 0.5kg por unidade de Massa; Queijo (Massa) não tem estoque_minimo
+    const farinha = produto({ id: "farinha", nome: "Farinha de Trigo", estoque_atual: 100 });
+    mockListProdutos.mockResolvedValue([...produtos, farinha]);
+
+    const ficha: FichaTecnica = {
+      id: "f1",
+      produto_manipulado_id: massa.id, // estoque 10
+      produto_bruto_id: farinha.id,
+      quantidade_bruto_por_unidade: 0.5,
+      perda_pct: null,
+      observacoes: null,
+    };
+    mockListFichas.mockResolvedValue([ficha]);
+
+    // necessário de Massa = 20un, estoque 10 -> falta 10un -> 10 * 0.5 = 5kg de farinha
+    const resultado = await calcularSugestaoCompra({ qtdPizzasBasilico: 20, qtdPizzasPopulares: 0, registrarMeta: false });
+
+    expect(resultado.itens.find((i) => i.produtoNome === "Massa de Pizza")).toBeUndefined();
+
+    const farinhaItem = resultado.itens.find((i) => i.produtoNome === "Farinha de Trigo")!;
+    expect(farinhaItem.necessario).toBeCloseTo(5);
+    expect(farinhaItem.estoqueAtual).toBe(100);
+    expect(farinhaItem.falta).toBe(0); // 100kg em estoque cobre de sobra
+  });
+
+  it("não gera necessidade de bruto quando o estoque do manipulado já cobre a meta", async () => {
+    const farinha = produto({ id: "farinha", nome: "Farinha de Trigo", estoque_atual: 100 });
+    mockListProdutos.mockResolvedValue([...produtos, farinha]);
+    mockListFichas.mockResolvedValue([
+      { id: "f1", produto_manipulado_id: massa.id, produto_bruto_id: farinha.id, quantidade_bruto_por_unidade: 0.5, perda_pct: null, observacoes: null },
+    ]);
+
+    // meta pede só 5 pizzas -> necessário de Massa = 5un, estoque 10un cobre -> falta 0, sem explosão
+    const resultado = await calcularSugestaoCompra({ qtdPizzasBasilico: 5, qtdPizzasPopulares: 0, registrarMeta: false });
+
+    expect(resultado.itens.find((i) => i.produtoNome === "Massa de Pizza")).toBeUndefined();
+    expect(resultado.itens.find((i) => i.produtoNome === "Farinha de Trigo")).toBeUndefined();
+  });
+
+  it("soma a necessidade explodida com o uso direto do mesmo bruto por outro sabor", async () => {
+    const farinha = produto({ id: "farinha", nome: "Farinha de Trigo", estoque_atual: 0 });
+    mockListProdutos.mockResolvedValue([...produtos, farinha]);
+    mockListFichas.mockResolvedValue([
+      { id: "f1", produto_manipulado_id: massa.id, produto_bruto_id: farinha.id, quantidade_bruto_por_unidade: 0.5, perda_pct: null, observacoes: null },
+    ]);
+
+    // piso de segurança de um sabor hipotético que usa Farinha direto (bruto)
+    mockListSabores.mockResolvedValue([
+      { id: "s1", nome: "Sabor com farinha direta", tipo: "piso_seguranca", categoria: "salgada", piso_minimo_pizzas: 4, queijo_override_kg: null, ativo: true, observacoes: null },
+    ]);
+    mockListIngredientes.mockResolvedValue([
+      { id: "i1", sabor_id: "s1", produto_id: farinha.id, grupo_substituicao_id: null, quantidade: 1, unidade: "kg" },
+    ]);
+
+    // Massa: necessário 4 (meta 0 + piso 4un), estoque 10 -> falta 0 -> sem explosão
+    // Farinha direta: 1kg * 4 = 4kg
+    const resultado = await calcularSugestaoCompra({ qtdPizzasBasilico: 0, qtdPizzasPopulares: 0, registrarMeta: false });
+    const farinhaItem = resultado.itens.find((i) => i.produtoNome === "Farinha de Trigo")!;
+    expect(farinhaItem.necessario).toBeCloseTo(4);
+  });
+
+  it("mantém o manipulado direto (com aviso) quando não há ficha técnica cadastrada", async () => {
+    // sem mockListFichas customizado -> fica [] (default), então Massa (falta 10) some
+    // sem entrar no fallback? Não: setupMocksBasicos já deixa fichas=[] -> fallback ativa.
+    const resultado = await calcularSugestaoCompra({ qtdPizzasBasilico: 20, qtdPizzasPopulares: 0, registrarMeta: false });
+    const massaItem = resultado.itens.find((i) => i.produtoNome === "Massa de Pizza")!;
+    expect(massaItem).toBeDefined();
+    expect(massaItem.motivo).toContain("sem ficha técnica cadastrada");
+  });
+});
+
+describe("calcularSugestaoCompra — valor estimado", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    setupMocksBasicos();
+  });
+
+  it("calcula valorEstimado = precoUnitario × sugestaoArredondada e soma no total", async () => {
+    const caixaComPreco = produto({ id: "caixa-b", nome: "Caixa de Pizza Basílico", unidade: "un", estoque_atual: 5, preco_unitario: 2.5 });
+    mockListProdutos.mockResolvedValue([massa, molho, queijo, caixaComPreco]);
+
+    // necessário: 20un, estoque 5 -> falta 15 -> 15 * 2.5 = 37.5
+    const resultado = await calcularSugestaoCompra({ qtdPizzasBasilico: 20, qtdPizzasPopulares: 0, registrarMeta: false });
+    const caixaItem = resultado.itens.find((i) => i.produtoNome === "Caixa de Pizza Basílico")!;
+
+    expect(caixaItem.valorEstimado).toBeCloseTo(37.5);
+    expect(resultado.valorTotalEstimado).toBeGreaterThanOrEqual(37.5);
+  });
+
+  it("conta itens sem preço cadastrado em vez de tratar como zero", async () => {
+    // Massa (fallback, sem ficha) não tem preco_unitario -> não deveria contar no total
+    const resultado = await calcularSugestaoCompra({ qtdPizzasBasilico: 20, qtdPizzasPopulares: 0, registrarMeta: false });
+    const massaItem = resultado.itens.find((i) => i.produtoNome === "Massa de Pizza")!;
+
+    expect(massaItem.valorEstimado).toBeNull();
+    expect(resultado.itensComPrecoDesconhecido).toBeGreaterThan(0);
+  });
+
+  it("usa o preço do membro mais barato do pool como estimativa", async () => {
+    const grupo: GrupoSubstituicao = { id: "g1", nome: "Requeijão (populares)", categoria: "requeijao", observacoes: null };
+    mockListGrupos.mockResolvedValue([grupo]);
+
+    const barato = produto({ id: "r1", nome: "Requeijão Genérico", estoque_atual: 0, preco_unitario: 17.9 });
+    const caro = produto({ id: "r2", nome: "Requeijão Puranata", estoque_atual: 0, preco_unitario: 64.9 });
+    mockGetMembrosGrupo.mockResolvedValue([barato, caro]);
+
+    mockListSabores.mockResolvedValue([
+      { id: "s1", nome: "Sabor pool", tipo: "piso_seguranca", categoria: "salgada", piso_minimo_pizzas: 4, queijo_override_kg: null, ativo: true, observacoes: null },
+    ]);
+    mockListIngredientes.mockResolvedValue([
+      { id: "i1", sabor_id: "s1", produto_id: null, grupo_substituicao_id: grupo.id, quantidade: 0.1, unidade: "kg" },
+    ]);
+
+    const resultado = await calcularSugestaoCompra({ qtdPizzasBasilico: 0, qtdPizzasPopulares: 0, registrarMeta: false });
+    const item = resultado.itens.find((i) => i.produtoNome === grupo.nome)!;
+
+    expect(item.precoUnitario).toBe(17.9);
   });
 });
 
@@ -171,6 +326,7 @@ describe("calcularSugestaoCompra — padrão de embalagem", () => {
     mockGetPadrao.mockImplementation(async (produtoId: string) => (produtoId === queijo.id ? padrao : null));
 
     // necessário: 0.2kg * 30 pizzas = 6kg, estoque 0 -> falta 6kg -> arredonda pra 8kg (múltiplo de 4)
+    // queijo é manipulado sem ficha cadastrada -> cai no fallback, que também aplica padrão de embalagem
     const resultado = await calcularSugestaoCompra({ qtdPizzasBasilico: 30, qtdPizzasPopulares: 0, registrarMeta: false });
     const queijoItem = resultado.itens.find((i) => i.produtoNome === "Queijo Triturado")!;
     expect(queijoItem.falta).toBe(6);
@@ -184,11 +340,13 @@ describe("formatarSugestaoWhatsApp", () => {
     const texto = formatarSugestaoWhatsApp({
       meta: { validoAte: null, qtdPizzasBasilico: 10, qtdPizzasPopulares: 0 },
       itens: [],
+      valorTotalEstimado: 0,
+      itensComPrecoDesconhecido: 0,
     });
     expect(texto).toContain("nenhuma compra necessária");
   });
 
-  it("lista itens com falta, incluindo tag de pool quando aplicável", () => {
+  it("lista itens com falta, valor estimado, total e tag de pool quando aplicável", () => {
     const texto = formatarSugestaoWhatsApp({
       meta: { validoAte: "2026-08-27", qtdPizzasBasilico: 10, qtdPizzasPopulares: 0 },
       itens: [
@@ -202,6 +360,8 @@ describe("formatarSugestaoWhatsApp", () => {
           falta: 4,
           sugestaoArredondada: 4,
           motivo: "item universal (salgada, basilico)",
+          precoUnitario: 39.9,
+          valorEstimado: 159.6,
         },
         {
           produtoId: "grupo-requeijao",
@@ -213,12 +373,18 @@ describe("formatarSugestaoWhatsApp", () => {
           falta: 2,
           sugestaoArredondada: 2,
           motivo: "piso de segurança",
+          precoUnitario: 17.9,
+          valorEstimado: 35.8,
         },
       ],
+      valorTotalEstimado: 195.4,
+      itensComPrecoDesconhecido: 0,
     });
 
     expect(texto).toContain("Queijo Triturado");
     expect(texto).toContain("2026-08-27");
     expect(texto).toContain("pool");
+    expect(texto).toContain("195,40");
+    expect(texto).toContain("Total estimado");
   });
 });

@@ -14,12 +14,13 @@ function linhaTabela(item: SugestaoCompraResultado["itens"][number]): string {
       <td class="num">${brl(item.necessario)}</td>
       <td class="num destaque">${semFalta ? "—" : brl(item.sugestaoArredondada)}</td>
       <td class="unidade">${item.unidade}</td>
+      <td class="num">${semFalta ? "—" : item.valorEstimado != null ? `R$ ${brl(item.valorEstimado)}` : "?"}</td>
       <td class="motivo">${item.motivo}</td>
     </tr>`;
 }
 
 function gerarHtml(resultado: SugestaoCompraResultado): string {
-  const { meta, itens } = resultado;
+  const { meta, itens, valorTotalEstimado, itensComPrecoDesconhecido } = resultado;
   const linhas = itens.map(linhaTabela).join("");
   const totalFaltando = itens.filter((i) => i.falta > 0).length;
 
@@ -77,6 +78,7 @@ function gerarHtml(resultado: SugestaoCompraResultado): string {
   tr.ok td.destaque { color: #94a3b8; }
   .pool { font-size: 9px; background: #e0e7ff; color: #4338ca; padding: 1px 6px; border-radius: 4px; margin-left: 4px; }
   .motivo { color: #64748b; font-size: 10px; }
+  tr.total td { padding: 10px 12px; font-weight: 800; font-size: 13px; border-top: 2px solid #1e293b; }
   .rodape { margin-top: 16px; text-align: center; font-size: 10px; color: #94a3b8; }
 </style>
 </head>
@@ -88,7 +90,7 @@ function gerarHtml(resultado: SugestaoCompraResultado): string {
     Basílico: ${meta.qtdPizzasBasilico} pizzas &nbsp;·&nbsp; Populares: ${meta.qtdPizzasPopulares} pizzas
     ${meta.validoAte ? `&nbsp;·&nbsp; válido até ${meta.validoAte}` : ""}
   </div>
-  <div class="badge">${totalFaltando} ${totalFaltando === 1 ? "item precisa" : "itens precisam"} de compra</div>
+  <div class="badge">${totalFaltando} ${totalFaltando === 1 ? "item precisa" : "itens precisam"} de compra ${totalFaltando > 0 ? `· R$ ${brl(valorTotalEstimado)}` : ""}</div>
 </div>
 
 <div class="wrap">
@@ -100,16 +102,25 @@ function gerarHtml(resultado: SugestaoCompraResultado): string {
         <th style="text-align:right">Necessário</th>
         <th style="text-align:right">Comprar</th>
         <th>Unidade</th>
+        <th style="text-align:right">Valor</th>
         <th>Motivo</th>
       </tr>
     </thead>
     <tbody>
       ${linhas}
     </tbody>
+    ${
+      totalFaltando > 0
+        ? `<tfoot><tr class="total"><td colspan="5">TOTAL ESTIMADO</td><td class="num">R$ ${brl(valorTotalEstimado)}</td><td></td></tr></tfoot>`
+        : ""
+    }
   </table>
 </div>
 
-<div class="rodape">Gerado em ${new Date().toLocaleString("pt-BR")} · Sugestão automática — decisão final é do time</div>
+<div class="rodape">
+  Gerado em ${new Date().toLocaleString("pt-BR")} · Sugestão automática — decisão final é do time
+  ${itensComPrecoDesconhecido > 0 ? `<br>${itensComPrecoDesconhecido} item(ns) sem preço cadastrado, não incluído(s) no total` : ""}
+</div>
 
 </body>
 </html>`;
