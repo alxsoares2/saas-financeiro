@@ -1,0 +1,334 @@
+// Motor de sugestão de compra — equivalente ao calcularDRE() do módulo
+// financeiro, mas pro estoque. Ver SPEC-estoque-manipulacao.md seções 4 a 10.
+//
+// Premissas assumidas explicitamente (a spec deixa como "ajustar durante
+// implementação" ou "a confirmar" — documentadas aqui pra revisão fácil):
+//
+// 1. Os sabores-âncora (tipo='ancora') NÃO entram no cálculo de ingredientes
+//    exclusivos (frango desfiado, calabresa fatiada, requeijão etc) — só os
+//    itens UNIVERSAIS são dimensionados pela meta interativa. A spec é
+//    explícita: "o sistema não tenta prever a proporção exata por sabor,
+//    só garante que os universais cubram o total pedido" (seção 7). Decidir
+//    quanto de frango/calabresa/requeijão comprar pros âncoras fica com o
+//    time — o relatório apenas lista o estoque atual desses insumos como
+//    referência, sem sugestão automática.
+// 2. Os sabores piso_seguranca SOMAM ao total de pizzas salgadas/doces
+//    pra dimensionar os itens universais (massa/molho/queijo/caixa/lacre/
+//    orégano) — são pizzas adicionais à meta principal, não um subconjunto
+//    dela (seção 6: "garantir estoque mínimo... pra no mínimo 3-4 pizzas",
+//    tratado como piso adicional, não incluído na meta pedida ao time).
+// 3. Refrigerante Basílico assume proporção normal:zero de 2:1 (spec diz
+//    "o bot já assume", sem confirmar o valor exato — seção 9). Ajustável
+//    em REFRIGERANTE_BASILICO_PROPORCAO_ZERO abaixo.
+// 4. Piso mínimo padrão pra sabores piso_seguranca não-doce é 4 pizzas
+//    (spec diz "3-4", ficamos com o teto pra manter a margem de segurança
+//    já usada em outras regras da spec). Grupo doce usa 5 (seção 6).
+import {
+  criarMetaProducao,
+  getMembrosGrupo,
+  getPadraoEmbalagem,
+  getProdutoPorId,
+  listFichasTecnicas,
+  listGruposSubstituicao,
+  listItensUniversais,
+  listProdutos,
+  listSabores,
+  listTodosIngredientesSabores,
+} from "./db.js";
+import {
+  CategoriaItemUniversal,
+  GrupoSubstituicao,
+  Marca,
+  NecessidadeInsumo,
+  PadraoEmbalagem,
+  Produto,
+  Sabor,
+  SaborIngrediente,
+  SugestaoCompraResultado,
+} from "./types.js";
+
+export const REFRIGERANTE_BASILICO_PCT_DAS_PIZZAS = 0.6;
+export const REFRIGERANTE_POPULARES_PCT_DAS_PIZZAS = 0.7;
+export const REFRIGERANTE_BASILICO_PROPORCAO_ZERO = 1 / 3; // 2:1 normal:zero
+export const PISO_MINIMO_PADRAO_PIZZAS = 4;
+export const PISO_MINIMO_DOCE_PIZZAS = 5;
+
+interface Acumulador {
+  chave: string; // "produto:<id>" ou "grupo:<id>"
+  isPool: boolean;
+  refId: string;
+  necessario: number;
+  unidade: string;
+  motivos: Set<string>;
+}
+
+function chaveDe(ref: { produto_id: string | null; grupo_substituicao_id: string | null }): string {
+  return ref.produto_id ? `produto:${ref.produto_id}` : `grupo:${ref.grupo_substituicao_id}`;
+}
+
+function acumular(mapa: Map<string, Acumulador>, ref: { produto_id: string | null; grupo_substituicao_id: string | null }, qtd: number, unidade: string, motivo: string) {
+  if (qtd <= 0) return;
+  const chave = chaveDe(ref);
+  const existente = mapa.get(chave);
+  if (existente) {
+    existente.necessario += qtd;
+    existente.motivos.add(motivo);
+  } else {
+    mapa.set(chave, {
+      chave,
+      isPool: !!ref.grupo_substituicao_id,
+      refId: (ref.produto_id ?? ref.grupo_substituicao_id)!,
+      necessario: qtd,
+      unidade,
+      motivos: new Set([motivo]),
+    });
+  }
+}
+
+function arredondarCompra(falta: number, padrao: PadraoEmbalagem | null): { quantidade: number; origemPadrao?: string } {
+  if (falta <= 0) return { quantidade: 0 };
+  if (!padrao || !padrao.peso_ou_volume_por_unidade) return { quantidade: falta };
+
+  const tamanhoUnidade = padrao.peso_ou_volume_por_unidade;
+  let unidades = Math.ceil(falta / tamanhoUnidade);
+  if (padrao.multiplo_minimo && padrao.multiplo_minimo > 1) {
+    unidades = Math.ceil(unidades / padrao.multiplo_minimo) * padrao.multiplo_minimo;
+  }
+  return { quantidade: unidades * tamanhoUnidade, origemPadrao: padrao.nome_padrao };
+}
+
+export interface ParametrosSugestao {
+  qtdPizzasBasilico: number;
+  qtdPizzasPopulares: number;
+  validoAte?: string;
+  textoOriginal?: string;
+  chatId?: string;
+  registrarMeta?: boolean; // default true — grava em metas_producao pra histórico
+}
+
+export async function calcularSugestaoCompra(params: ParametrosSugestao): Promise<SugestaoCompraResultado> {
+  const [produtos, sabores, ingredientesSabores, itensUniversais, grupos] = await Promise.all([
+    listProdutos({ ativo: true }),
+    listSabores(),
+    listTodosIngredientesSabores(),
+    listItensUniversais(),
+    listGruposSubstituicao(),
+  ]);
+
+  const produtoPorId = new Map(produtos.map((p) => [p.id, p]));
+  const gruposPorId = new Map(grupos.map((g) => [g.id, g]));
+
+  // ── 1) Total de pizzas por categoria (salgada/doce) ──────────────────────
+  // Salgada = meta principal (âncoras, por marca) + piso de segurança de
+  // cada sabor salgado não-âncora (adicional, ver premissa 2 acima).
+  const pisoSabores = sabores.filter((s) => s.tipo === "piso_seguranca" && s.ativo);
+  const pisoPizzasSalgadas = pisoSabores
+    .filter((s) => s.categoria === "salgada")
+    .reduce((acc, s) => acc + (s.piso_minimo_pizzas ?? PISO_MINIMO_PADRAO_PIZZAS), 0);
+  const pisoPizzasDoces = pisoSabores
+    .filter((s) => s.categoria === "doce")
+    .reduce((acc, s) => acc + (s.piso_minimo_pizzas ?? PISO_MINIMO_DOCE_PIZZAS), 0);
+
+  const totalSalgadaBasilico = params.qtdPizzasBasilico + pisoPizzasSalgadas;
+  const totalSalgadaPopulares = params.qtdPizzasPopulares;
+  const totalDoce = pisoPizzasDoces; // meta interativa não cobre sobremesas (spec seção 7)
+
+  const acumulador = new Map<string, Acumulador>();
+
+  // ── 2) Itens universais (massa, molho, queijo, caixa, lacre, orégano) ───
+  const totalPorCategoriaEMarca = (categoria: CategoriaItemUniversal, marca: Marca | null): number => {
+    const totalSalgada = marca === "basilico" ? totalSalgadaBasilico : marca === "populares" ? totalSalgadaPopulares : totalSalgadaBasilico + totalSalgadaPopulares;
+    const totalDoceMarca = marca ? 0 : totalDoce; // doce hoje só existe na spec como cardápio Basílico (fonte: FichaTécnicaPizza.xlsx)
+    if (categoria === "salgada") return totalSalgada;
+    if (categoria === "doce") return totalDoceMarca;
+    return totalSalgada + totalDoceMarca; // 'ambas'
+  };
+
+  for (const item of itensUniversais) {
+    const totalPizzas = totalPorCategoriaEMarca(item.categoria, item.marca);
+    if (totalPizzas <= 0) continue;
+    acumular(
+      acumulador,
+      { produto_id: item.produto_id, grupo_substituicao_id: item.grupo_substituicao_id },
+      item.quantidade * totalPizzas,
+      item.unidade,
+      `item universal (${item.categoria}${item.marca ? `, ${item.marca}` : ""})`
+    );
+  }
+
+  // ── 3) Piso de segurança — ingredientes exclusivos de cada sabor não-âncora
+  const ingredientesPorSabor = new Map<string, SaborIngrediente[]>();
+  for (const ing of ingredientesSabores) {
+    const lista = ingredientesPorSabor.get(ing.sabor_id) ?? [];
+    lista.push(ing);
+    ingredientesPorSabor.set(ing.sabor_id, lista);
+  }
+
+  for (const sabor of pisoSabores) {
+    const piso = sabor.piso_minimo_pizzas ?? (sabor.categoria === "doce" ? PISO_MINIMO_DOCE_PIZZAS : PISO_MINIMO_PADRAO_PIZZAS);
+    const ingredientes = ingredientesPorSabor.get(sabor.id) ?? [];
+    for (const ing of ingredientes) {
+      acumular(
+        acumulador,
+        { produto_id: ing.produto_id, grupo_substituicao_id: ing.grupo_substituicao_id },
+        ing.quantidade * piso,
+        ing.unidade,
+        `piso de segurança — ${sabor.nome} (mín. ${piso} pizzas)`
+      );
+    }
+  }
+
+  // ── 4) Refrigerante ───────────────────────────────────────────────────
+  await acumularRefrigerante(acumulador, produtos, grupos, params.qtdPizzasBasilico, params.qtdPizzasPopulares);
+
+  // ── 5) Resolve estoque atual + arredondamento de compra por item ────────
+  const itens: NecessidadeInsumo[] = [];
+  for (const acc of acumulador.values()) {
+    let nome: string;
+    let unidadeFinal = acc.unidade;
+    let estoqueAtual = 0;
+    let padrao: PadraoEmbalagem | null = null;
+
+    if (acc.isPool) {
+      const grupo = gruposPorId.get(acc.refId);
+      nome = grupo?.nome ?? "Grupo desconhecido";
+      const membros = await getMembrosGrupo(acc.refId);
+      estoqueAtual = membros.reduce((acc2, m) => acc2 + Number(m.estoque_atual), 0);
+      // Pool não tem um único padrão de embalagem — decisão de qual
+      // variante comprar fica com o time (spec seção 8).
+    } else {
+      const produto = produtoPorId.get(acc.refId) ?? (await getProdutoPorId(acc.refId));
+      nome = produto?.nome ?? "Produto desconhecido";
+      estoqueAtual = Number(produto?.estoque_atual ?? 0);
+      const minimo = Number(produto?.estoque_minimo ?? 0);
+      estoqueAtual = estoqueAtual; // estoque_minimo é somado como colchão abaixo
+      padrao = await getPadraoEmbalagem(acc.refId);
+      // soma o estoque_minimo como colchão de segurança na necessidade
+      acc.necessario += minimo;
+    }
+
+    const falta = Math.max(acc.necessario - estoqueAtual, 0);
+    const { quantidade: sugestaoArredondada, origemPadrao } = arredondarCompra(falta, padrao);
+
+    itens.push({
+      produtoId: acc.refId,
+      produtoNome: nome,
+      unidade: unidadeFinal,
+      isPool: acc.isPool,
+      necessario: round(acc.necessario),
+      estoqueAtual: round(estoqueAtual),
+      falta: round(falta),
+      sugestaoArredondada: round(sugestaoArredondada),
+      origemPadrao,
+      motivo: Array.from(acc.motivos).join(" + "),
+    });
+  }
+
+  itens.sort((a, b) => b.falta - a.falta);
+
+  if (params.registrarMeta !== false) {
+    await criarMetaProducao({
+      validoAte: params.validoAte,
+      qtdPizzasBasilico: params.qtdPizzasBasilico,
+      qtdPizzasPopulares: params.qtdPizzasPopulares,
+      textoOriginal: params.textoOriginal,
+      chatId: params.chatId,
+    });
+  }
+
+  return {
+    meta: {
+      validoAte: params.validoAte ?? null,
+      qtdPizzasBasilico: params.qtdPizzasBasilico,
+      qtdPizzasPopulares: params.qtdPizzasPopulares,
+    },
+    itens,
+  };
+}
+
+async function acumularRefrigerante(
+  acumulador: Map<string, Acumulador>,
+  produtos: Produto[],
+  grupos: GrupoSubstituicao[],
+  qtdPizzasBasilico: number,
+  qtdPizzasPopulares: number
+): Promise<void> {
+  // Basílico: refrigerante nominal (Coca-Cola) + zero, proporção 2:1
+  const totalBasilico = Math.ceil(qtdPizzasBasilico * REFRIGERANTE_BASILICO_PCT_DAS_PIZZAS);
+  const coca = produtos.find((p) => normalizarSimples(p.nome) === "coca cola 1l");
+  const cocaZero = produtos.find((p) => normalizarSimples(p.nome) === "coca cola zero 1l");
+  if (coca && totalBasilico > 0) {
+    const qtdZero = Math.round(totalBasilico * REFRIGERANTE_BASILICO_PROPORCAO_ZERO);
+    const qtdNormal = totalBasilico - qtdZero;
+    acumular(acumulador, { produto_id: coca.id, grupo_substituicao_id: null }, qtdNormal, coca.unidade, "refrigerante Basílico (60% das pizzas, normal)");
+    if (cocaZero) {
+      acumular(acumulador, { produto_id: cocaZero.id, grupo_substituicao_id: null }, qtdZero, cocaZero.unidade, "refrigerante Basílico (60% das pizzas, zero)");
+    }
+  }
+
+  // Populares: total (70% das pizzas) coberto pelo membro mais barato do
+  // pool "Refrigerante Popular" que ainda não está em estoque suficiente.
+  const totalPopulares = Math.ceil(qtdPizzasPopulares * REFRIGERANTE_POPULARES_PCT_DAS_PIZZAS);
+  if (totalPopulares > 0) {
+    const grupoPopular = grupos.find((g) => g.categoria === "refrigerante_popular");
+    if (grupoPopular) {
+      const membros = await getMembrosGrupo(grupoPopular.id);
+      const estoquePool = membros.reduce((acc, m) => acc + Number(m.estoque_atual), 0);
+      const falta = totalPopulares - estoquePool;
+      if (falta > 0) {
+        const maisBarato = [...membros].filter((m) => m.preco_unitario != null).sort((a, b) => Number(a.preco_unitario) - Number(b.preco_unitario))[0];
+        if (maisBarato) {
+          acumular(acumulador, { produto_id: maisBarato.id, grupo_substituicao_id: null }, falta, maisBarato.unidade, "refrigerante populares (70% das pizzas, mais barato disponível)");
+        }
+      }
+    }
+  }
+}
+
+function normalizarSimples(texto: string): string {
+  return texto
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .replace(/[^\p{L}\p{N}\s]/gu, " ") // remove pontuação (ex: o hífen de "Coca-Cola")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function round(n: number): number {
+  return Math.round(n * 1000) / 1000;
+}
+
+// ── Formatação para WhatsApp ──────────────────────────────────────────────
+
+function brl(v: number): string {
+  return v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+export function formatarSugestaoWhatsApp(resultado: SugestaoCompraResultado): string {
+  const { meta, itens } = resultado;
+  const comFalta = itens.filter((i) => i.falta > 0);
+
+  const linhas: string[] = [
+    `*SUGESTÃO DE COMPRA*`,
+    meta.validoAte ? `_Válido até ${meta.validoAte}_` : "",
+    `Basílico: ${meta.qtdPizzasBasilico} pizzas · Populares: ${meta.qtdPizzasPopulares} pizzas`,
+    "",
+  ];
+
+  if (comFalta.length === 0) {
+    linhas.push("✅ Estoque cobre a meta pedida — nenhuma compra necessária.");
+  } else {
+    for (const item of comFalta) {
+      const tag = item.isPool ? " _(pool — decidir variante)_" : "";
+      linhas.push(
+        `• *${item.produtoNome}*${tag}: comprar *${brl(item.sugestaoArredondada)} ${item.unidade}*` +
+          (item.origemPadrao ? ` _(${item.origemPadrao})_` : "") +
+          `\n   estoque: ${brl(item.estoqueAtual)} · necessário: ${brl(item.necessario)}`
+      );
+    }
+  }
+
+  linhas.push("", "_Sugestão gerada automaticamente — decisão final é do time._");
+  return linhas.filter((l) => l !== "").join("\n");
+}

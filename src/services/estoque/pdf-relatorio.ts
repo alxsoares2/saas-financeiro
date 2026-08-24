@@ -1,0 +1,140 @@
+import puppeteer from "puppeteer";
+import { SugestaoCompraResultado } from "./types.js";
+
+function brl(v: number): string {
+  return v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function linhaTabela(item: SugestaoCompraResultado["itens"][number]): string {
+  const semFalta = item.falta <= 0;
+  return `
+    <tr class="${semFalta ? "ok" : "falta"}">
+      <td class="desc">${item.produtoNome}${item.isPool ? ' <span class="pool">pool</span>' : ""}</td>
+      <td class="num">${brl(item.estoqueAtual)}</td>
+      <td class="num">${brl(item.necessario)}</td>
+      <td class="num destaque">${semFalta ? "—" : brl(item.sugestaoArredondada)}</td>
+      <td class="unidade">${item.unidade}</td>
+      <td class="motivo">${item.motivo}</td>
+    </tr>`;
+}
+
+function gerarHtml(resultado: SugestaoCompraResultado): string {
+  const { meta, itens } = resultado;
+  const linhas = itens.map(linhaTabela).join("");
+  const totalFaltando = itens.filter((i) => i.falta > 0).length;
+
+  return `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+    font-size: 12px;
+    background: #f1f5f9;
+    color: #1e293b;
+    padding: 28px;
+  }
+  .header {
+    background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+    color: white;
+    padding: 20px 28px;
+    border-radius: 14px;
+    margin-bottom: 20px;
+  }
+  .header h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.5px; }
+  .header .meta { font-size: 13px; opacity: 0.8; margin-top: 6px; }
+  .header .badge {
+    display: inline-block;
+    margin-top: 10px;
+    background: rgba(255,255,255,0.15);
+    border-radius: 8px;
+    padding: 6px 14px;
+    font-weight: 700;
+  }
+  .wrap {
+    background: white;
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.07);
+  }
+  table { width: 100%; border-collapse: collapse; }
+  thead th {
+    padding: 10px 12px;
+    background: #f8fafc;
+    border-bottom: 2px solid #e2e8f0;
+    font-size: 10px;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    text-align: left;
+  }
+  td { padding: 8px 12px; border-bottom: 1px solid #f1f5f9; font-size: 12px; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.destaque { font-weight: 700; }
+  tr.falta td.destaque { color: #dc2626; }
+  tr.ok td.destaque { color: #94a3b8; }
+  .pool { font-size: 9px; background: #e0e7ff; color: #4338ca; padding: 1px 6px; border-radius: 4px; margin-left: 4px; }
+  .motivo { color: #64748b; font-size: 10px; }
+  .rodape { margin-top: 16px; text-align: center; font-size: 10px; color: #94a3b8; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="h1" style="font-size:22px;font-weight:700;color:white">SUGESTÃO DE COMPRA — ESTOQUE</div>
+  <div class="meta">
+    Basílico: ${meta.qtdPizzasBasilico} pizzas &nbsp;·&nbsp; Populares: ${meta.qtdPizzasPopulares} pizzas
+    ${meta.validoAte ? `&nbsp;·&nbsp; válido até ${meta.validoAte}` : ""}
+  </div>
+  <div class="badge">${totalFaltando} ${totalFaltando === 1 ? "item precisa" : "itens precisam"} de compra</div>
+</div>
+
+<div class="wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Produto</th>
+        <th style="text-align:right">Estoque</th>
+        <th style="text-align:right">Necessário</th>
+        <th style="text-align:right">Comprar</th>
+        <th>Unidade</th>
+        <th>Motivo</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${linhas}
+    </tbody>
+  </table>
+</div>
+
+<div class="rodape">Gerado em ${new Date().toLocaleString("pt-BR")} · Sugestão automática — decisão final é do time</div>
+
+</body>
+</html>`;
+}
+
+export async function gerarPdfSugestaoCompra(resultado: SugestaoCompraResultado): Promise<Buffer> {
+  const html = gerarHtml(resultado);
+
+  const browser = await puppeteer.launch({
+    headless: true,
+    args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+  });
+
+  try {
+    const page = await browser.newPage();
+    await page.setContent(html, { waitUntil: "load" });
+
+    const pdf = await page.pdf({
+      format: "A4",
+      printBackground: true,
+      margin: { top: "0", right: "0", bottom: "0", left: "0" },
+    });
+
+    return Buffer.from(pdf);
+  } finally {
+    await browser.close();
+  }
+}

@@ -48,6 +48,7 @@ import {
   enterTenant,
 } from "../db/supabase.js";
 import { findTenantByChat } from "../config/tenants.js";
+import { handleComandoEstoque } from "../services/estoque/whatsapp-comandos.js";
 
 const router = Router();
 
@@ -1878,6 +1879,23 @@ router.post("/zapi", async (req: Request, res: Response) => {
     await markMessageProcessed(messageId);
 
     const chatId = payload.chatId ?? payload.phone;
+
+    // Grupo dedicado de estoque (TENANTS com id terminando em "-estoque") —
+    // desvia inteiramente do fluxo financeiro. Usa o MESMO schema do
+    // tenant (financeiro) só pra dedup de mensagem acima; o módulo de
+    // estoque sempre força schema='estoque' internamente (ver
+    // services/estoque/db.ts), então isso não mistura os dados.
+    if (tenant.id.endsWith("-estoque")) {
+      if (payload.text?.message) {
+        await handleComandoEstoque(chatId, payload.text.message);
+      } else {
+        await sendTextMessage(
+          chatId,
+          "Ainda não processo fotos neste grupo — use um comando de texto.\nDigite *ajuda* pra ver os comandos disponíveis."
+        );
+      }
+      return;
+    }
 
     // Verifica comandos antes de tentar extrair dados financeiros
     if (payload.text?.message) {

@@ -30,12 +30,15 @@ export function enterTenant(ctx: TenantCtx): void {
   als.enterWith(ctx);
 }
 
+// Cliente pro banco/loja ativa (tenant atual), mas forçando um schema
+// específico em vez do schema padrão do tenant. Usado por módulos que têm
+// seu próprio schema isolado no mesmo projeto Supabase (ex: `estoque`,
+// que não deve se misturar com `financeiro`).
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function getClient(): any {
+export function getClientForSchema(schema: string): any {
   const ctx = als.getStore();
   const url = ctx?.url ?? process.env.SUPABASE_URL!;
   const key = ctx?.key ?? process.env.SUPABASE_SERVICE_ROLE_KEY!;
-  const schema = ctx?.schema ?? process.env.SUPABASE_SCHEMA ?? "financeiro";
   if (!url || !key) throw new Error("SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY são obrigatórios");
 
   const cacheKey = `${url}::${schema}`;
@@ -45,6 +48,13 @@ export function getClient(): any {
     _clients.set(cacheKey, client);
   }
   return client;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function getClient(): any {
+  const ctx = als.getStore();
+  const schema = ctx?.schema ?? process.env.SUPABASE_SCHEMA ?? "financeiro";
+  return getClientForSchema(schema);
 }
 
 export async function isMessageProcessed(messageId: string): Promise<boolean> {

@@ -10,6 +10,18 @@
 // Lojas ADICIONAIS (ex: Basílico) vêm da env var TENANTS (JSON array).
 // Assim você adiciona uma loja nova sem tocar na config da loja que já roda:
 //   TENANTS=[{"id":"basilico","grupo":"120...-group","supabaseUrl":"https://yyy.supabase.co","supabaseKey":"eyJ..."}]
+//
+// Grupo dedicado do módulo de ESTOQUE (fotos/comandos de contagem, separado
+// do grupo financeiro): adicione uma segunda entrada de TENANTS pra mesma
+// loja, com id terminando em "-estoque" e MESMA supabaseUrl/supabaseKey do
+// tenant financeiro dela (o schema usado por padrão nessa entrada não
+// importa — o módulo de estoque sempre força schema='estoque' internamente,
+// ver services/estoque/db.ts). O webhook detecta o sufixo "-estoque" no id
+// e desvia pro roteador de comandos de estoque em vez do financeiro:
+//   TENANTS=[
+//     {"id":"basilico","grupo":"<grupo financeiro>","supabaseUrl":"...","supabaseKey":"..."},
+//     {"id":"basilico-estoque","grupo":"<grupo estoque>","supabaseUrl":"...","supabaseKey":"..."}
+//   ]
 
 export interface Tenant {
   id: string;

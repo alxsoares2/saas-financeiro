@@ -2,6 +2,7 @@ import "dotenv/config";
 import express from "express";
 import webhookRouter from "./routes/webhook.js";
 import dreRouter from "./routes/dre.js";
+import estoqueRouter from "./routes/estoque.js";
 import cronRouter from "./routes/cron.js";
 
 const app = express();
@@ -42,6 +43,7 @@ app.get("/diag2", async (_req, res) => {
 
 app.use("/webhook", webhookRouter);
 app.use("/dre", dreRouter);
+app.use("/estoque", estoqueRouter);
 app.use("/api/cron", cronRouter);
 
 const PORT = Number(process.env.PORT) || 3000;
