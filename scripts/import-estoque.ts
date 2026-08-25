@@ -172,11 +172,12 @@ async function importarProdutosBase(linhas: LinhaContagem[]): Promise<Map<string
     const nomeFinal = RENOMEAR_PRODUTOS[linha.item] ?? linha.item;
     const chaveNormalizada = normalizar(nomeFinal);
     const tipo = MANIPULADOS_NA_CONTAGEM.has(chaveNormalizada) ? "manipulado" : "bruto";
+    const precoCorrigido = PRECOS_CORRIGIDOS[chaveNormalizada];
     const id = await upsertProdutoPreservandoEstoque({
       nome: nomeFinal,
       unidade: linha.unidade,
       tipo,
-      preco_unitario: linha.valor,
+      preco_unitario: precoCorrigido ?? linha.valor,
       estoque_atual: linha.estoque,
       observacoes: linha.observacoes,
       ativo: !PRODUTOS_DESATIVADOS.has(chaveNormalizada),
@@ -269,6 +270,16 @@ const PRODUTOS_DESATIVADOS = new Set([
   "massa de pizza pronta", // não é mais usada como backup
   "camarao eviscerado 41 50", // sabor Camarão saiu do cardápio (confirmado)
 ]);
+
+// Correção de preço unitário — a coluna "Valor" da planilha original às
+// vezes registra o preço do PACOTE fechado, não de 1 unidade individual
+// (estoque_atual continua contado por unidade — só o preço estava errado).
+// Achado com "Caixa de Pizza Genérica": R$32,90 era o preço do pacote de
+// 25 (ver padroes_embalagem), preço real por caixa é ~R$1,32. Chave = nome
+// normalizado (já considerando RENOMEAR_PRODUTOS), valor = preço/unidade correto.
+const PRECOS_CORRIGIDOS: Record<string, number> = {
+  "caixa de pizza generica": round4(32.9 / 25),
+};
 
 // ═══════════════════════════════════════════════════════════════════════
 // PASSO 2 — Produtos novos que a planilha de contagem não tinha
