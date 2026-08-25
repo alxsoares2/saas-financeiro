@@ -55,6 +55,12 @@ async function chamarVisao(
   const response = await getClient().chat.completions.create({
     model: opcoes?.modelo ?? "gpt-4o-mini",
     max_tokens: maxTokens,
+    // temperature 0: triagem/leitura/contagem são tarefas determinísticas
+    // por natureza (a resposta certa não muda entre rodadas) — sem isso o
+    // modelo usa a temperatura padrão da OpenAI, o que explicou um caso
+    // real de inconsistência entre rodadas na mesma foto (nome de item
+    // mudando, item sumindo do resultado sem a foto ter mudado).
+    temperature: 0,
     messages: [
       { role: "system", content: system },
       {
