@@ -5,6 +5,12 @@
 // matching.ts e decide gravar direto ou pedir confirmação no grupo —
 // nunca sem passar por uma dessas duas coisas.
 //
+// Os 3 tipos de foto (lista impressa, lista manuscrita, produto físico)
+// convergem pro MESMO formato depois da extração — {nome, quantidade,
+// unidade, confianca} por item — porque produto físico pode ter vários
+// produtos na mesma foto (geladeira, prateleira), não só um. Isso deixa
+// o resto do pipeline (matching + confirmação em lote) igual pros três.
+//
 // Confiança (spec seção 2, "Ordem do fluxo"):
 //   - lista impressa/digitada: item com produto encontrado (matching.ts) E
 //     confiança alta da IA -> grava direto. Resto do lote vai pra confirmação.
@@ -16,9 +22,9 @@
 //     inerentemente mais sujeita a erro que leitura de texto, então trata
 //     os dois casos igual até haver dado de acerto/erro real pra calibrar.
 import { encontrarProdutoPorNome } from "./matching.js";
-import { contarProdutoFisico, extrairListaContagem, triarFoto, TipoFotoEstoque } from "./foto-contagem.js";
-import { getPadraoEmbalagem, listProdutos, registrarMovimentacao } from "./db.js";
-import { OrigemMovimentacao, Produto } from "./types.js";
+import { contarProdutosVisiveis, extrairListaContagem, ItemListaExtraido, triarFoto } from "./foto-contagem.js";
+import { listPadroesEmbalagem, listProdutos, registrarMovimentacao } from "./db.js";
+import { OrigemMovimentacao } from "./types.js";
 import { sendTextMessage } from "../zapi.js";
 
 type MimeTypeImagem = "image/jpeg" | "image/png" | "image/webp" | "image/gif";
@@ -75,9 +81,13 @@ export async function handleFotoEstoque(
 
   try {
     if (triagem.tipo === "lista_impressa" || triagem.tipo === "lista_manuscrita") {
-      await processarLista(chatId, imageBuffer, mimeType, caption, fotoUrl, triagem.tipo);
+      const extraido = await extrairListaContagem(imageBuffer, mimeType, caption);
+      const origem: OrigemMovimentacao = triagem.tipo === "lista_impressa" ? "foto_lista_impressa" : "foto_lista_manuscrita";
+      await processarItensVisuais(chatId, extraido.itens, origem, fotoUrl, triagem.tipo === "lista_impressa");
     } else {
-      await processarProdutoFisico(chatId, imageBuffer, mimeType, caption, fotoUrl);
+      const referencia = await construirReferenciaPadroes();
+      const resultado = await contarProdutosVisiveis(imageBuffer, mimeType, referencia, caption);
+      await processarItensVisuais(chatId, resultado.itens, "foto_produto", fotoUrl, false);
     }
   } catch (err) {
     console.error("[whatsapp-fotos] Erro ao processar foto:", err);
@@ -85,23 +95,38 @@ export async function handleFotoEstoque(
   }
 }
 
-// ── Lista impressa/manuscrita ───────────────────────────────────────────
+// Monta um texto de referência ("Produto: descrição do padrão") a partir
+// de padroes_embalagem, pra IA converter "N caixas/peças visíveis" direto
+// pra quantidade de estoque na contagem de produto físico.
+async function construirReferenciaPadroes(): Promise<string> {
+  const [padroes, produtos] = await Promise.all([listPadroesEmbalagem(), listProdutos({ ativo: true })]);
+  const produtoPorId = new Map(produtos.map((p) => [p.id, p]));
+  return padroes
+    .map((padrao) => {
+      const produto = produtoPorId.get(padrao.produto_id);
+      return produto ? `- ${produto.nome}: ${padrao.nome_padrao}` : null;
+    })
+    .filter((linha): linha is string => linha !== null)
+    .join("\n");
+}
 
-async function processarLista(
+// ── Pipeline comum — resolve produto, decide gravar direto ou confirmar ──
+// Usado pelos 3 tipos de foto (lista impressa, manuscrita, produto
+// físico), já que todos convergem pro formato {nome, quantidade, unidade}.
+
+async function processarItensVisuais(
   chatId: string,
-  imageBuffer: Buffer,
-  mimeType: MimeTypeImagem,
-  caption: string | undefined,
+  itensExtraidos: ItemListaExtraido[],
+  origem: OrigemMovimentacao,
   fotoUrl: string,
-  tipo: TipoFotoEstoque
+  permitirAutoRegistro: boolean
 ): Promise<void> {
-  const extraido = await extrairListaContagem(imageBuffer, mimeType, caption);
-  const comQuantidade = extraido.itens.filter((i) => i.quantidade != null);
+  const comQuantidade = itensExtraidos.filter((i) => i.quantidade != null);
 
   if (comQuantidade.length === 0) {
     await sendTextMessage(
       chatId,
-      "Não consegui ler nenhum item com quantidade nessa lista. Tenta mandar de novo com mais luz/foco, ou usa um comando de texto (*ajuda*)."
+      "Não consegui identificar quantidade em nenhum item dessa foto. Tenta mandar de novo com mais luz/foco, ou usa um comando de texto (*ajuda*)."
     );
     return;
   }
@@ -120,11 +145,8 @@ async function processarLista(
     };
   });
 
-  // Só a lista IMPRESSA pode gravar direto (spec: "OCR direto, alta
-  // confiança"). Manuscrita sempre vai inteira pra confirmação.
-  const auto = tipo === "lista_impressa" ? itensResolvidos.filter((i) => i.produtoId && i.confiancaOcr >= LIMIAR_AUTO_REGISTRO) : [];
+  const auto = permitirAutoRegistro ? itensResolvidos.filter((i) => i.produtoId && i.confiancaOcr >= LIMIAR_AUTO_REGISTRO) : [];
   const paraConfirmar = itensResolvidos.filter((i) => !auto.includes(i));
-  const origem: OrigemMovimentacao = tipo === "lista_impressa" ? "foto_lista_impressa" : "foto_lista_manuscrita";
 
   for (const item of auto) {
     await registrarMovimentacao({
@@ -156,77 +178,6 @@ async function processarLista(
   }
 
   await sendTextMessage(chatId, linhas.join("\n"));
-}
-
-// ── Foto de produto físico ──────────────────────────────────────────────
-
-async function processarProdutoFisico(
-  chatId: string,
-  imageBuffer: Buffer,
-  mimeType: MimeTypeImagem,
-  caption: string | undefined,
-  fotoUrl: string
-): Promise<void> {
-  const produtos = await listProdutos({ ativo: true });
-
-  // Resolve o produto pela legenda ANTES de perguntar pra IA — mais
-  // confiável que pedir pra ela adivinhar só pela imagem.
-  let produtoConhecido: Produto | null = null;
-  if (caption) {
-    const match = encontrarProdutoPorNome(caption, produtos);
-    if (match && match.confianca >= 0.6) produtoConhecido = match.produto;
-  }
-
-  const padraoConhecido = produtoConhecido ? await getPadraoEmbalagem(produtoConhecido.id) : null;
-  const descricaoPadrao = padraoConhecido ? `${padraoConhecido.nome_padrao} (${padraoConhecido.unidades_por_padrao} unidades por embalagem)` : null;
-
-  const resultado = await contarProdutoFisico(imageBuffer, mimeType, {
-    nomeProdutoConhecido: produtoConhecido?.nome ?? null,
-    padraoEmbalagemDescricao: descricaoPadrao,
-    caption,
-  });
-
-  // Sem legenda, tenta casar pelo que a IA identificou na foto.
-  if (!produtoConhecido && resultado.produtoIdentificado) {
-    const match = encontrarProdutoPorNome(resultado.produtoIdentificado, produtos);
-    if (match) produtoConhecido = match.produto;
-  }
-
-  if (!produtoConhecido || resultado.unidadesContadas == null) {
-    const linhas = [
-      "Não consegui identificar o produto ou contar com confiança nessa foto.",
-      resultado.observacao ? `_${resultado.observacao}_` : null,
-      'Tenta mandar de novo com o produto na legenda (ex: "queijo mussarela"), ou usa um comando de texto.',
-    ];
-    await sendTextMessage(chatId, linhas.filter(Boolean).join("\n"));
-    return;
-  }
-
-  const padrao = padraoConhecido ?? (await getPadraoEmbalagem(produtoConhecido.id));
-  const quantidadeFinal = padrao?.unidades_por_padrao ? resultado.unidadesContadas * padrao.unidades_por_padrao : resultado.unidadesContadas;
-
-  const item: ItemPendente = {
-    nomeLido: resultado.produtoIdentificado ?? produtoConhecido.nome,
-    quantidade: quantidadeFinal,
-    unidade: produtoConhecido.unidade,
-    produtoId: produtoConhecido.id,
-    produtoNome: produtoConhecido.nome,
-    confiancaOcr: confiancaTextoParaNumero(resultado.confianca),
-  };
-
-  // Produto físico SEMPRE confirma (ver premissa no topo do arquivo).
-  pendentes.set(chatId, { origem: "foto_produto", itens: [item], fotoUrl, criadoEm: Date.now() });
-
-  const linhas = [
-    `📦 *${produtoConhecido.nome}*`,
-    padrao?.unidades_por_padrao
-      ? `${brl(resultado.unidadesContadas)} ${padrao.nome_padrao} × ${padrao.unidades_por_padrao} = *${brl(quantidadeFinal)} ${produtoConhecido.unidade}*`
-      : `*${brl(quantidadeFinal)} ${produtoConhecido.unidade}*`,
-    resultado.observacao ? `_${resultado.observacao}_` : null,
-    "",
-    "Responda *sim* pra confirmar ou *não* pra descartar.",
-  ];
-  await sendTextMessage(chatId, linhas.filter(Boolean).join("\n"));
 }
 
 // ── Resposta de confirmação ("sim" / "não" / "sim 1,3") ────────────────

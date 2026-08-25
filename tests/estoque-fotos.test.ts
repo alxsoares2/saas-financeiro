@@ -2,18 +2,18 @@ import { handleFotoEstoque, handleRespostaConfirmacaoFoto } from "../src/service
 import * as db from "../src/services/estoque/db";
 import * as fotoContagem from "../src/services/estoque/foto-contagem";
 import * as zapi from "../src/services/zapi";
-import { PadraoEmbalagem, Produto } from "../src/services/estoque/types";
+import { Produto } from "../src/services/estoque/types";
 
 jest.mock("../src/services/estoque/db");
 jest.mock("../src/services/estoque/foto-contagem");
 jest.mock("../src/services/zapi");
 
 const mockListProdutos = db.listProdutos as jest.MockedFunction<typeof db.listProdutos>;
-const mockGetPadrao = db.getPadraoEmbalagem as jest.MockedFunction<typeof db.getPadraoEmbalagem>;
+const mockListPadroes = db.listPadroesEmbalagem as jest.MockedFunction<typeof db.listPadroesEmbalagem>;
 const mockRegistrarMovimentacao = db.registrarMovimentacao as jest.MockedFunction<typeof db.registrarMovimentacao>;
 const mockTriarFoto = fotoContagem.triarFoto as jest.MockedFunction<typeof fotoContagem.triarFoto>;
 const mockExtrairLista = fotoContagem.extrairListaContagem as jest.MockedFunction<typeof fotoContagem.extrairListaContagem>;
-const mockContarProdutoFisico = fotoContagem.contarProdutoFisico as jest.MockedFunction<typeof fotoContagem.contarProdutoFisico>;
+const mockContarProdutosVisiveis = fotoContagem.contarProdutosVisiveis as jest.MockedFunction<typeof fotoContagem.contarProdutosVisiveis>;
 const mockSendTextMessage = zapi.sendTextMessage as jest.MockedFunction<typeof zapi.sendTextMessage>;
 
 function produto(over: Partial<Produto> & { id: string; nome: string }): Produto {
@@ -37,13 +37,14 @@ function produto(over: Partial<Produto> & { id: string; nome: string }): Produto
 
 const tomate = produto({ id: "tomate", nome: "Tomate", estoque_atual: 2 });
 const queijo = produto({ id: "queijo", nome: "Queijo Mussarela", unidade: "kg", estoque_atual: 3 });
+const requeijao = produto({ id: "requeijao", nome: "Requeijão Genérico", unidade: "kg", estoque_atual: 1 });
 
 const buffer = Buffer.from("fake-image");
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockListProdutos.mockResolvedValue([tomate, queijo]);
-  mockGetPadrao.mockResolvedValue(null);
+  mockListProdutos.mockResolvedValue([tomate, queijo, requeijao]);
+  mockListPadroes.mockResolvedValue([]);
   mockRegistrarMovimentacao.mockResolvedValue({} as any);
   mockSendTextMessage.mockResolvedValue(undefined);
 });
@@ -94,24 +95,10 @@ describe("handleFotoEstoque — lista manuscrita", () => {
 });
 
 describe("handleFotoEstoque — produto físico", () => {
-  it("sempre confirma, mesmo com padrão de embalagem e confiança alta", async () => {
-    const padrao: PadraoEmbalagem = {
-      id: "p1",
-      produto_id: queijo.id,
-      nome_padrao: "Barra de queijo (múltiplos de 4kg)",
-      unidades_por_padrao: 4,
-      peso_ou_volume_por_unidade: 4,
-      multiplo_minimo: null,
-      quantidade_minima: null,
-      ativo: true,
-    };
-    mockGetPadrao.mockResolvedValue(padrao);
+  it("sempre confirma, mesmo com produto identificado e confiança alta (1 produto só)", async () => {
     mockTriarFoto.mockResolvedValue({ tipo: "produto_fisico", confianca: "alta" });
-    mockContarProdutoFisico.mockResolvedValue({
-      produtoIdentificado: "Queijo Mussarela",
-      unidadesContadas: 3,
-      confianca: "alta",
-      observacao: null,
+    mockContarProdutosVisiveis.mockResolvedValue({
+      itens: [{ nome: "Queijo Mussarela", quantidade: 12, unidade: "kg", confianca: "alta" }],
     });
 
     await handleFotoEstoque("chat4", buffer, "image/jpeg", "queijo mussarela", "https://foto.url/4.jpg");
@@ -119,18 +106,38 @@ describe("handleFotoEstoque — produto físico", () => {
     expect(mockRegistrarMovimentacao).not.toHaveBeenCalled();
     const texto = mockSendTextMessage.mock.calls[0][1];
     expect(texto).toContain("Queijo Mussarela");
-    expect(texto).toContain("12"); // 3 barras x 4kg
+    expect(texto).toContain("12");
     expect(texto).toContain("sim");
+  });
+
+  it("reconhece VÁRIOS produtos na mesma foto (ex: geladeira) e pede confirmação de todos", async () => {
+    mockTriarFoto.mockResolvedValue({ tipo: "produto_fisico", confianca: "media" });
+    mockContarProdutosVisiveis.mockResolvedValue({
+      itens: [
+        { nome: "Queijo Mussarela", quantidade: 4, unidade: "kg", confianca: "media" },
+        { nome: "Requeijão Genérico", quantidade: 1.5, unidade: "kg", confianca: "media" },
+        { nome: "Tomate", quantidade: 3, unidade: "kg", confianca: "baixa" },
+      ],
+    });
+
+    await handleFotoEstoque("chat-geladeira", buffer, "image/jpeg", undefined, "https://foto.url/geladeira.jpg");
+
+    // produto físico nunca grava direto, mesmo com 3 itens reconhecidos
+    expect(mockRegistrarMovimentacao).not.toHaveBeenCalled();
+    const texto = mockSendTextMessage.mock.calls[0][1];
+    expect(texto).toContain("Queijo Mussarela");
+    expect(texto).toContain("Requeijão Genérico");
+    expect(texto).toContain("Tomate");
+    expect(texto).toContain("3 itens precisam de confirmação");
+
+    const confirmado = await handleRespostaConfirmacaoFoto("chat-geladeira", "sim", "Fulano");
+    expect(confirmado).toBe(true);
+    expect(mockRegistrarMovimentacao).toHaveBeenCalledTimes(3);
   });
 
   it("não confirma nada quando não consegue identificar produto nem contar", async () => {
     mockTriarFoto.mockResolvedValue({ tipo: "produto_fisico", confianca: "baixa" });
-    mockContarProdutoFisico.mockResolvedValue({
-      produtoIdentificado: null,
-      unidadesContadas: null,
-      confianca: "baixa",
-      observacao: "foto borrada",
-    });
+    mockContarProdutosVisiveis.mockResolvedValue({ itens: [] });
 
     await handleFotoEstoque("chat5", buffer, "image/jpeg", undefined, "https://foto.url/5.jpg");
 

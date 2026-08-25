@@ -133,60 +133,58 @@ export async function extrairListaContagem(imageBuffer: Buffer, mimeType: MimeTy
   }
 }
 
-// ── 3) Foto de produto físico — conta embalagens/unidades visíveis ────────
+// ── 3) Foto de produto físico — pode ter 1 OU VÁRIOS produtos na mesma foto
+// (pilha de caixas de um item só, ou geladeira/prateleira com vários
+// produtos diferentes juntos) — por isso devolve a MESMA forma de
+// {itens: [...]} da extração de lista, em vez de um resultado único: o
+// downstream (matching + confirmação em lote) já sabe lidar com N itens.
 
-export interface ResultadoContagemFisica {
-  produtoIdentificado: string | null;
-  unidadesContadas: number | null;
-  confianca: "alta" | "media" | "baixa";
-  observacao: string | null;
-}
+function contagemFisicaSystem(referenciaPadroes: string): string {
+  return `Você conta estoque físico de uma pizzaria a partir de uma foto (pode ser 1 produto só — ex: pilha de
+caixas do mesmo item — ou vários produtos diferentes juntos na mesma foto — ex: geladeira ou prateleira com
+itens variados).
 
-function contagemFisicaSystem(nomeProdutoConhecido: string | null, padraoEmbalagem: string | null): string {
-  const contextoProduto = nomeProdutoConhecido
-    ? `O produto já foi identificado como "${nomeProdutoConhecido}" — conte quantas unidades de embalagem aparecem na foto (não precisa identificar o produto de novo).`
-    : `Identifique qual produto aparece na foto (pelo rótulo/embalagem visível) e conte quantas unidades de embalagem aparecem.`;
+Identifique CADA produto distinto visível na foto e estime a quantidade de cada um, JÁ CONVERTIDA pra
+unidade de estoque que a pizzaria usa (kg, un, bisnaga, barra etc — não a quantidade de caixas/pacotes).
 
-  const contextoPadrao = padraoEmbalagem
-    ? `Padrão de embalagem cadastrado pra esse produto: ${padraoEmbalagem}. Conte quantas CAIXAS/EMBALAGENS FECHADAS aparecem (não o conteúdo de dentro) — a multiplicação pelo padrão é feita depois, por outro processo.`
-    : `Não há padrão de embalagem cadastrado pra esse produto — conte as unidades individuais que conseguir ver diretamente (ex: quantas peças, potes, sacos soltos).`;
-
-  return `Você conta estoque físico de uma pizzaria a partir de uma foto (prateleira, geladeira, pilha de caixas).
-${contextoProduto}
-${contextoPadrao}
+Referência de embalagem de produtos já cadastrados (use pra converter "vejo N caixas/peças" em quantidade
+de estoque, quando o produto da foto bater com um da lista — ex: "3 barras de queijo" vira quantidade 12,
+unidade "kg", se a barra for de 4kg segundo a referência):
+${referenciaPadroes || "(nenhum padrão de embalagem cadastrado ainda)"}
 
 Retorne SOMENTE JSON válido, sem markdown:
 {
-  "produto_identificado": string | null,
-  "unidades_contadas": number | null,
-  "confianca": "alta" | "media" | "baixa",
-  "observacao": string | null
+  "itens": [
+    { "nome": string, "quantidade": number | null, "unidade": string | null, "confianca": "alta" | "media" | "baixa" }
+  ]
 }
 
 Regras:
-- "unidades_contadas": null se não der pra contar com nenhuma confiança (foto ruim, produto não identificável). Nunca invente um número só pra preencher.
-- "confianca": "alta" só se a contagem for direta e sem ambiguidade (itens bem separados, visíveis, contáveis 1 a 1). Empilhamento, produtos parcialmente escondidos, ou contagem sem padrão de embalagem cadastrado NUNCA é "alta" — no máximo "media".
-- "observacao": qualquer ressalva relevante (ex: "pode ter mais caixas atrás da pilha visível", "rótulo parcialmente coberto").`;
+- Cada produto distinto na foto = um item na lista, mesmo que a foto só tenha 1 produto.
+- "nome": nome do produto como você identifica pelo rótulo/embalagem/aparência.
+- "quantidade": sua melhor estimativa JÁ na unidade de estoque (use a referência de embalagem acima quando o
+  produto bater). Se não conseguir estimar com nenhuma confiança pra um produto específico, quantidade=null
+  NESSE item — não invente número, mas ainda assim liste o produto se conseguiu identificar ele.
+- "confianca" é por item: contagem por foto raramente é "alta" (itens podem estar parcialmente escondidos,
+  empilhados, ou sem referência de embalagem conhecida) — use "alta" só quando a contagem é direta e sem
+  ambiguidade nenhuma.
+- Se a foto não mostrar nenhum produto de estoque reconhecível, retorne {"itens": []}.`;
 }
 
-export async function contarProdutoFisico(
+export async function contarProdutosVisiveis(
   imageBuffer: Buffer,
   mimeType: MimeTypeImagem,
-  opcoes: { nomeProdutoConhecido?: string | null; padraoEmbalagemDescricao?: string | null; caption?: string }
-): Promise<ResultadoContagemFisica> {
-  const system = contagemFisicaSystem(opcoes.nomeProdutoConhecido ?? null, opcoes.padraoEmbalagemDescricao ?? null);
-  const contexto = opcoes.caption ? `Legenda enviada junto: "${opcoes.caption}"` : "Conte o que aparece nesta foto.";
-  const raw = await chamarVisao(system, imageBuffer, mimeType, contexto, 512);
+  referenciaPadroes: string,
+  caption?: string
+): Promise<ResultadoExtracaoLista> {
+  const contexto = caption ? `Legenda enviada junto: "${caption}"` : "Identifique e conte os produtos visíveis nesta foto.";
+  const raw = await chamarVisao(contagemFisicaSystem(referenciaPadroes), imageBuffer, mimeType, contexto, 1024);
   try {
     const parsed = JSON.parse(limparJson(raw));
-    return {
-      produtoIdentificado: typeof parsed.produto_identificado === "string" ? parsed.produto_identificado : null,
-      unidadesContadas: typeof parsed.unidades_contadas === "number" ? parsed.unidades_contadas : null,
-      confianca: ["alta", "media", "baixa"].includes(parsed.confianca) ? parsed.confianca : "baixa",
-      observacao: typeof parsed.observacao === "string" ? parsed.observacao : null,
-    };
+    if (!Array.isArray(parsed.itens)) return { itens: [] };
+    return { itens: parsed.itens };
   } catch (err) {
-    console.error("[foto-contagem] Erro ao parsear contagem física:", err, "Raw:", raw.substring(0, 200));
-    return { produtoIdentificado: null, unidadesContadas: null, confianca: "baixa", observacao: null };
+    console.error("[foto-contagem] Erro ao parsear contagem de produtos visíveis:", err, "Raw:", raw.substring(0, 200));
+    return { itens: [] };
   }
 }
