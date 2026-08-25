@@ -6,7 +6,7 @@ import { gerarAnalise } from "../services/claude.js";
 import { gerarPdfDRE } from "../services/pdf-dre.js";
 import { gerarRelatorioContas } from "../services/relatorio.js";
 import { inferirGrupoDre } from "../services/grupo-dre.js";
-import { sendTextMessage, sendDocumentMessage } from "../services/zapi.js";
+import { sendTextMessage, sendDocumentMessage, downloadMedia } from "../services/zapi.js";
 import {
   isMessageProcessed,
   markMessageProcessed,
@@ -46,9 +46,11 @@ import {
   registrarHistoricoCompra,
   getComprasRastreadas,
   enterTenant,
+  uploadDocument,
 } from "../db/supabase.js";
 import { findTenantByChat } from "../config/tenants.js";
 import { handleComandoEstoque } from "../services/estoque/whatsapp-comandos.js";
+import { handleFotoEstoque, handleRespostaConfirmacaoFoto } from "../services/estoque/whatsapp-fotos.js";
 
 const router = Router();
 
@@ -1887,13 +1889,27 @@ router.post("/zapi", async (req: Request, res: Response) => {
     // services/estoque/db.ts), então isso não mistura os dados.
     if (tenant.id.endsWith("-estoque")) {
       if (payload.text?.message) {
-        await handleComandoEstoque(chatId, payload.text.message);
-      } else {
-        await sendTextMessage(
-          chatId,
-          "Ainda não processo fotos neste grupo — use um comando de texto.\nDigite *ajuda* pra ver os comandos disponíveis."
-        );
+        // Resposta de confirmação de uma foto pendente ("sim"/"não") tem
+        // prioridade sobre o roteador de comandos normal — senão "sim"
+        // cairia no "Não entendi" do handleComandoEstoque.
+        const foiConfirmacao = await handleRespostaConfirmacaoFoto(chatId, payload.text.message, payload.senderName);
+        if (!foiConfirmacao) await handleComandoEstoque(chatId, payload.text.message);
+        return;
       }
+
+      const imageUrlEstoque = payload.image?.imageUrl ?? payload.image?.url;
+      if (imageUrlEstoque) {
+        const buffer = await downloadMedia(imageUrlEstoque);
+        const mimeType = (payload.image!.mimeType || "image/jpeg") as "image/jpeg" | "image/png" | "image/webp" | "image/gif";
+        const urlArquivo = await uploadDocument(buffer, `estoque_${payload.messageId}.jpg`, mimeType);
+        await handleFotoEstoque(chatId, buffer, mimeType, payload.image!.caption, urlArquivo);
+        return;
+      }
+
+      await sendTextMessage(
+        chatId,
+        "Ainda não processo esse tipo de mensagem neste grupo — manda uma foto (lista ou produto) ou um comando de texto.\nDigite *ajuda* pra ver os comandos disponíveis."
+      );
       return;
     }
 

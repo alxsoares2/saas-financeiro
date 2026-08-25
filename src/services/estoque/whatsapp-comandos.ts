@@ -1,16 +1,14 @@
 // Comandos de WhatsApp do módulo de estoque — roteados a partir de um
 // grupo dedicado (diferente do grupo financeiro), ver src/routes/webhook.ts.
 //
-// Escopo desta primeira versão: só comandos de TEXTO estruturado
-// ("sugestao 30 20"). NÃO inclui ainda:
+// Comandos de TEXTO estruturado ("sugestao 30 20"). A contagem por foto
+// (SPEC seção 2) vive em foto-contagem.ts + whatsapp-fotos.ts, roteada
+// direto pelo webhook antes de chegar aqui — este arquivo só cuida de
+// texto. Ainda NÃO incluído:
 //   - Interpretação de texto livre pra meta interativa (spec seção 7,
-//     ex: "30 pra quarta") — precisaria de uma chamada à IA (Claude) pra
-//     extrair os números, tipo o que services/claude.ts já faz pro
-//     financeiro. Por enquanto o formato é sempre "sugestao [basílico]
-//     [populares]".
-//   - Contagem por foto (OCR de lista impressa/manuscrita/produto —
-//     spec seção 2). Isso é uma feature bem maior (visão computacional +
-//     fluxo de confirmação no grupo) — fica pra uma próxima etapa.
+//     ex: "30 pra quarta") — precisaria de uma chamada à IA pra extrair
+//     os números, tipo o que services/claude.ts já faz pro financeiro.
+//     Por enquanto o formato é sempre "sugestao [basílico] [populares]".
 import { calcularSugestaoCompra, formatarSugestaoWhatsApp } from "./sugestao-compra.js";
 import { gerarPdfEstoque, gerarPdfSugestaoCompra } from "./pdf-relatorio.js";
 import { listProdutos } from "./db.js";
@@ -28,7 +26,10 @@ const AJUDA = [
   "• *estoque* — lista o estoque atual (texto)",
   "• *estoque pdf* — lista o estoque atual em PDF",
   "",
-  "_Contagem por foto ainda não está disponível neste grupo — em breve._",
+  "*Contagem por foto:*",
+  "• Manda foto de lista impressa/digitada — grava direto o que tiver certeza, confirma o resto",
+  "• Manda foto de lista manuscrita — sempre confirma antes de gravar",
+  '• Manda foto do produto físico (com o nome na legenda, ex: "queijo mussarela") — sempre confirma antes de gravar',
 ].join("\n");
 
 function parseSugestao(texto: string): { basilico: number; populares: number; validoAte?: string; pdf: boolean } | null {
