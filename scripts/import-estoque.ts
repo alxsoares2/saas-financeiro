@@ -250,7 +250,7 @@ async function upsertProdutoPreservandoEstoque(produto: {
 // banco em vez de criar uma duplicata órfã. Chave = nome antigo (como
 // ainda aparece em Contagemxcompras.xlsx), valor = nome novo.
 const RENOMEAR_PRODUTOS: Record<string, string> = {
-  "Caldo de Galinha 1kg": "Caldo de Galinha", // não é bem 1kg — nome corrigido
+  "Caldo de Galinha 1kg": "Caldo de Galinha", // peso tirado do nome, agora vive em padroes_embalagem (confirmado: 1,01kg)
 };
 
 async function renomearProdutosLegado(): Promise<void> {
@@ -482,7 +482,13 @@ const PADROES_SEED: PadraoSeed[] = [
   // corrigir peso_ou_volume_por_unidade se o pacote real for diferente):
   { produto: "Manjericão", nomePadrao: "Maço (estimado ~50g — CONFIRMAR)", pesoOuVolumePorUnidade: 0.05, unidadesPorPadrao: 1 },
   { produto: "Rúcula", nomePadrao: "Maço (estimado ~50g — CONFIRMAR)", pesoOuVolumePorUnidade: 0.05, unidadesPorPadrao: 1 },
-  { produto: "Cream Cheese Polenghi/Catupiry", nomePadrao: "Pote (estimado ~300g — CONFIRMAR)", pesoOuVolumePorUnidade: 0.3, unidadesPorPadrao: 1 },
+
+  // CONFIRMADO por pesquisa de mercado (linha de food service): "Cream
+  // Cheese Polenghi" é vendido em bag de 1,5kg ou balde de 3,6kg — nunca
+  // em pote pequeno. O preço já cadastrado (R$74,90) bate muito melhor
+  // com o bag de 1,5kg (~R$50/kg, plausível) do que com os 300g chutados
+  // antes (que dariam ~R$250/kg, preço absurdo) — usando 1,5kg.
+  { produto: "Cream Cheese Polenghi/Catupiry", nomePadrao: "Bag 1,5kg (confirmado — pesquisa de mercado)", pesoOuVolumePorUnidade: 1.5, unidadesPorPadrao: 1 },
 
   // BASEADO EM HISTÓRICO REAL — coluna "Compras" da própria
   // Contagemxcompras.xlsx mostra a última quantidade comprada desses itens
@@ -537,9 +543,14 @@ const PADROES_SEED: PadraoSeed[] = [
   { produto: "Doce de Leite Bisnaga 1,001kg", nomePadrao: "Bisnaga ~1kg", pesoOuVolumePorUnidade: 1.001, unidadesPorPadrao: 1 },
   { produto: "Leite Condensado 320g", nomePadrao: "Lata 320g", pesoOuVolumePorUnidade: 0.32, unidadesPorPadrao: 1 },
   {
-    produto: "Caldo de Galinha", // renomeado de "Caldo de Galinha 1kg" (ver RENOMEAR_PRODUTOS) — peso real do
-    nomePadrao: "Pacote fechado (peso estimado 1kg — CONFIRMAR)", // pacote não confirmado, só o nome antigo sugeria 1kg
-    pesoOuVolumePorUnidade: 1,
+    // renomeado de "Caldo de Galinha 1kg" (ver RENOMEAR_PRODUTOS) — CONFIRMADO
+    // por pesquisa de mercado: praticamente toda marca de food service
+    // (Knorr, Maggi, Tecnutri, Fazmax, Alinutri) vende caldo de galinha
+    // em pacote de 1,01kg — o nome antigo já estava certo, só tirado do
+    // nome do produto por preferência de cadastro.
+    produto: "Caldo de Galinha",
+    nomePadrao: "Pacote 1,01kg (confirmado — pesquisa de mercado)",
+    pesoOuVolumePorUnidade: 1.01,
     unidadesPorPadrao: 1,
   },
   { produto: "Bobina de Impressão Fiscal", nomePadrao: "Rolo inteiro", pesoOuVolumePorUnidade: 1, unidadesPorPadrao: 1 },
