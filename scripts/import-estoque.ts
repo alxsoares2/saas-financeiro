@@ -554,6 +554,12 @@ const PADROES_SEED: PadraoSeed[] = [
     unidadesPorPadrao: 1,
   },
   { produto: "Bobina de Impressão Fiscal", nomePadrao: "Rolo inteiro", pesoOuVolumePorUnidade: 1, unidadesPorPadrao: 1 },
+
+  // Caixa de Pizza Genérica: não se compra em quantidade solta, vem em
+  // pacote fechado — quantidade exata a confirmar com o time (usando 25
+  // por enquanto). multiploMinimo=25 força a sugestão sempre em pacotes
+  // inteiros (25, 50, 75...), mesmo pra unidade discreta ("un").
+  { produto: "Caixa de Pizza Genérica", nomePadrao: "Pacote de 25 unidades (a confirmar)", pesoOuVolumePorUnidade: 1, multiploMinimo: 25, unidadesPorPadrao: 25 },
 ];
 
 async function importarPadroesEmbalagem(idPorNome: Map<string, string>): Promise<void> {

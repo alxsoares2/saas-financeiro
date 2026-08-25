@@ -394,6 +394,33 @@ describe("calcularSugestaoCompra — padrão de embalagem", () => {
     expect(resultadoAlto.itens.find((i) => i.produtoNome === "Pepperoni")!.sugestaoArredondada).toBe(1.5);
   });
 
+  it("[multiplo_minimo em unidade discreta] Caixa de Pizza Genérica só sugere em pacotes fechados de 25", async () => {
+    const caixaComPadrao = produto({ id: "caixa-b", nome: "Caixa de Pizza Genérica", unidade: "un", marca: "populares", estoque_atual: 18 });
+    mockListProdutos.mockResolvedValue([massa, molho, queijo, caixaComPadrao]);
+    mockListItensUniversais.mockResolvedValue([
+      { id: "4", categoria: "ambas", produto_id: caixaComPadrao.id, grupo_substituicao_id: null, marca: "populares", quantidade: 1, unidade: "un", observacoes: null, ativo: true },
+    ]);
+    mockListPadroes.mockResolvedValue([
+      {
+        id: "pcx1",
+        produto_id: caixaComPadrao.id,
+        nome_padrao: "Pacote de 25 unidades",
+        unidades_por_padrao: 25,
+        peso_ou_volume_por_unidade: 1,
+        multiplo_minimo: 25,
+        quantidade_minima: null,
+        ativo: true,
+      },
+    ]);
+
+    // necessário 20un, estoque 18un -> falta 2un -> sem padrão seria "2 un",
+    // com o pacote de 25 tem que virar 1 pacote inteiro (25un)
+    const resultado = await calcularSugestaoCompra({ qtdPizzasBasilico: 0, qtdPizzasPopulares: 20, registrarMeta: false });
+    const caixaItem = resultado.itens.find((i) => i.produtoNome === "Caixa de Pizza Genérica")!;
+    expect(caixaItem.falta).toBe(2);
+    expect(caixaItem.sugestaoArredondada).toBe(25);
+  });
+
   it("converte kg da receita pra unidade discreta de estoque (bisnaga) e arredonda pro inteiro, nunca fração", async () => {
     // produto tracked em "bisnaga" (~1,5kg cada), receita pede em kg
     const requeijao = produto({ id: "req", nome: "Requeijão Genérico", unidade: "bisnaga", estoque_atual: 0 });
