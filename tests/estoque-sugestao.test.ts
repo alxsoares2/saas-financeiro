@@ -130,12 +130,7 @@ describe("calcularSugestaoCompra — piso de segurança", () => {
 
   it("ingrediente usado por um único sabor: soma direta (qtd_por_pizza × piso)", async () => {
     const lombo = produto({ id: "lombo", nome: "Lombinho Canadense Fatiado", estoque_atual: 0 });
-    // estoque de Massa zerado nesse teste pra deixar visível que o piso
-    // também aumenta a necessidade do item universal (com estoque cheio o
-    // item nem apareceria — falta zero não gera sugestão, ver describe
-    // "explosão de manipulado em brutos").
-    const massaSemEstoque = produto({ id: "massa", nome: "Massa de Pizza", unidade: "un", tipo: "manipulado", estoque_atual: 0 });
-    mockListProdutos.mockResolvedValue([massaSemEstoque, molho, queijo, caixaBasilico, lombo]);
+    mockListProdutos.mockResolvedValue([...produtos, lombo]);
     mockListSabores.mockResolvedValue([sabor({ id: "s1", nome: "Lombo c/ catupiry", piso_minimo_pizzas: 4 })]);
     mockListIngredientes.mockResolvedValue([
       { id: "i1", sabor_id: "s1", produto_id: lombo.id, grupo_substituicao_id: null, quantidade: 0.18, unidade: "kg" },
@@ -146,11 +141,39 @@ describe("calcularSugestaoCompra — piso de segurança", () => {
     // 0.18kg * 4 pizzas = 0.72kg
     const lomboItem = resultado.itens.find((i) => i.produtoNome === lombo.nome)!;
     expect(lomboItem.necessario).toBeCloseTo(0.72);
+  });
 
-    // universal (massa) também sobe: 0 da meta + 4 do piso = 4 unidades
-    // (sem ficha técnica cadastrada nesse teste -> fallback direto)
+  it("[correção] piso de segurança NÃO infla os itens universais — só a meta principal dimensiona eles", async () => {
+    const lombo = produto({ id: "lombo", nome: "Lombinho Canadense Fatiado", estoque_atual: 0 });
+    // massa sem estoque pra deixar visível se ela aparecesse por engano
+    const massaSemEstoque = produto({ id: "massa", nome: "Massa de Pizza", unidade: "un", tipo: "manipulado", estoque_atual: 0 });
+    mockListProdutos.mockResolvedValue([massaSemEstoque, molho, queijo, caixaBasilico, lombo]);
+    mockListSabores.mockResolvedValue([sabor({ id: "s1", nome: "Lombo c/ catupiry", piso_minimo_pizzas: 4 })]);
+    mockListIngredientes.mockResolvedValue([
+      { id: "i1", sabor_id: "s1", produto_id: lombo.id, grupo_substituicao_id: null, quantidade: 0.18, unidade: "kg" },
+    ]);
+
+    // meta = 0 pizzas, só tem o piso do Lombo (4 pizzas) — massa NÃO deve
+    // aparecer no relatório (necessário universal = 0, mesmo com piso ativo)
+    const resultado = await calcularSugestaoCompra({ qtdPizzasBasilico: 0, qtdPizzasPopulares: 0, registrarMeta: false });
+
+    expect(resultado.itens.find((i) => i.produtoNome === "Massa de Pizza")).toBeUndefined();
+    expect(resultado.itens.find((i) => i.produtoNome === lombo.nome)).toBeDefined();
+  });
+
+  it("[correção] com meta pedida, universal escala só pela meta — piso não soma em cima", async () => {
+    const lombo = produto({ id: "lombo", nome: "Lombinho Canadense Fatiado", estoque_atual: 0 });
+    mockListProdutos.mockResolvedValue([...produtos, lombo]);
+    mockListSabores.mockResolvedValue([sabor({ id: "s1", nome: "Lombo c/ catupiry", piso_minimo_pizzas: 4 })]);
+    mockListIngredientes.mockResolvedValue([
+      { id: "i1", sabor_id: "s1", produto_id: lombo.id, grupo_substituicao_id: null, quantidade: 0.18, unidade: "kg" },
+    ]);
+
+    // meta = 20 pizzas Basílico; piso do Lombo continua em 4 pizzas —
+    // massa deve ser 20 (só a meta), NÃO 24 (meta + piso, comportamento antigo)
+    const resultado = await calcularSugestaoCompra({ qtdPizzasBasilico: 20, qtdPizzasPopulares: 0, registrarMeta: false });
     const massaItem = resultado.itens.find((i) => i.produtoNome === "Massa de Pizza")!;
-    expect(massaItem.necessario).toBe(4);
+    expect(massaItem.necessario).toBe(20);
   });
 
   it("ingrediente compartilhado por 2+ sabores: mediana das contribuições × 1,5 (não soma)", async () => {
@@ -386,6 +409,8 @@ describe("formatarSugestaoWhatsApp", () => {
       itens: [],
       valorTotalEstimado: 0,
       itensComPrecoDesconhecido: 0,
+      custoPorPizza: 0,
+      alertaCustoExcedido: false,
     });
     expect(texto).toContain("nenhuma compra necessária");
   });
@@ -423,6 +448,8 @@ describe("formatarSugestaoWhatsApp", () => {
       ],
       valorTotalEstimado: 195.4,
       itensComPrecoDesconhecido: 0,
+      custoPorPizza: 19.54,
+      alertaCustoExcedido: false,
     });
 
     expect(texto).toContain("Queijo Triturado");
@@ -430,5 +457,63 @@ describe("formatarSugestaoWhatsApp", () => {
     expect(texto).toContain("pool");
     expect(texto).toContain("195,40");
     expect(texto).toContain("Total estimado");
+  });
+
+  it("[failsafe] custo por pizza acima do limite vira alerta, não a lista pronta pra aprovar", () => {
+    const texto = formatarSugestaoWhatsApp({
+      meta: { validoAte: null, qtdPizzasBasilico: 5, qtdPizzasPopulares: 0 },
+      itens: [
+        {
+          produtoId: "queijo",
+          produtoNome: "Queijo Triturado",
+          unidade: "kg",
+          isPool: false,
+          necessario: 5,
+          estoqueAtual: 0,
+          falta: 5,
+          sugestaoArredondada: 5,
+          motivo: "item universal",
+          precoUnitario: 250,
+          valorEstimado: 1250,
+        },
+      ],
+      valorTotalEstimado: 1250,
+      itensComPrecoDesconhecido: 0,
+      custoPorPizza: 250,
+      alertaCustoExcedido: true,
+    });
+
+    expect(texto).toContain("CUSTO FORA DO ESPERADO");
+    expect(texto).toContain("REVISÃO MANUAL");
+    expect(texto).not.toContain("Queijo Triturado"); // não lista os itens como se estivesse pronto
+  });
+});
+
+describe("calcularSugestaoCompra — failsafe de custo por pizza", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    setupMocksBasicos();
+  });
+
+  it("marca alertaCustoExcedido quando custo/pizza passa do limite (R$40)", async () => {
+    const queijoCaro = produto({ id: "queijo", nome: "Queijo Triturado", tipo: "manipulado", marca: "basilico", estoque_atual: 0, preco_unitario: 300 });
+    mockListProdutos.mockResolvedValue([massa, molho, queijoCaro, caixaBasilico]);
+
+    // 10 pizzas Basílico -> queijo necessário 2kg * R$300 = R$600 -> R$60/pizza (> R$40)
+    const resultado = await calcularSugestaoCompra({ qtdPizzasBasilico: 10, qtdPizzasPopulares: 0, registrarMeta: false });
+
+    expect(resultado.custoPorPizza).toBeGreaterThan(40);
+    expect(resultado.alertaCustoExcedido).toBe(true);
+  });
+
+  it("não alerta quando custo/pizza está dentro do limite", async () => {
+    const resultado = await calcularSugestaoCompra({ qtdPizzasBasilico: 10, qtdPizzasPopulares: 0, registrarMeta: false });
+    expect(resultado.alertaCustoExcedido).toBe(false);
+  });
+
+  it("custoPorPizza é null quando não há pizzas pedidas", async () => {
+    const resultado = await calcularSugestaoCompra({ qtdPizzasBasilico: 0, qtdPizzasPopulares: 0, registrarMeta: false });
+    expect(resultado.custoPorPizza).toBeNull();
+    expect(resultado.alertaCustoExcedido).toBe(false);
   });
 });

@@ -162,4 +162,6 @@ export interface SugestaoCompraResultado {
   itens: NecessidadeInsumo[];
   valorTotalEstimado: number;      // soma de valorEstimado dos itens com falta > 0
   itensComPrecoDesconhecido: number; // quantos itens com falta > 0 não entraram no total por falta de preço cadastrado
+  custoPorPizza: number | null;    // valorTotalEstimado / (qtdPizzasBasilico + qtdPizzasPopulares); null se 0 pizzas pedidas
+  alertaCustoExcedido: boolean;    // true se custoPorPizza > LIMITE_CUSTO_POR_PIZZA_REAIS (ver sugestao-compra.ts)
 }

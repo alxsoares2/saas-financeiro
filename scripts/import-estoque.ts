@@ -442,6 +442,17 @@ const PADROES_SEED: PadraoSeed[] = [
   { produto: "Manjericão", nomePadrao: "Maço (estimado ~50g — CONFIRMAR)", pesoOuVolumePorUnidade: 0.05, unidadesPorPadrao: 1 },
   { produto: "Rúcula", nomePadrao: "Maço (estimado ~50g — CONFIRMAR)", pesoOuVolumePorUnidade: 0.05, unidadesPorPadrao: 1 },
   { produto: "Cream Cheese Polenghi/Catupiry", nomePadrao: "Pote (estimado ~300g — CONFIRMAR)", pesoOuVolumePorUnidade: 0.3, unidadesPorPadrao: 1 },
+
+  // BASEADO EM HISTÓRICO REAL — coluna "Compras" da própria
+  // Contagemxcompras.xlsx mostra a última quantidade comprada desses itens
+  // fracionada bem abaixo de 1kg (achado ao investigar por que o motor de
+  // sugestão estava forçando compra de 1kg inteiro pra itens caros usados
+  // em quantidade mínima, ex: 25g de canela virando "comprar 1kg" =
+  // R$49,90 em vez de ~R$5 — não é chute, é o que o time já compra).
+  { produto: "Canela em Pó", nomePadrao: "Fração 0,1kg (histórico de compra)", pesoOuVolumePorUnidade: 0.1, unidadesPorPadrao: 1 },
+  { produto: "Chimichurri", nomePadrao: "Fração 0,1kg (histórico de compra)", pesoOuVolumePorUnidade: 0.1, unidadesPorPadrao: 1 },
+  { produto: "Peito de Peru Fatiado", nomePadrao: "Fração 0,3kg (histórico de compra)", pesoOuVolumePorUnidade: 0.3, unidadesPorPadrao: 1 },
+  { produto: "Queijo Parmesão", nomePadrao: "Fração 0,2kg (histórico de compra)", pesoOuVolumePorUnidade: 0.2, unidadesPorPadrao: 1 },
 ];
 
 async function importarPadroesEmbalagem(idPorNome: Map<string, string>): Promise<void> {
@@ -546,6 +557,7 @@ interface SaborSeed {
   categoria: "salgada" | "doce";
   pisoMinimoPizzas?: number;
   queijoOverrideKg?: number;
+  ativo?: boolean; // default true — false pra sabor fora do cardápio (ver SHEETS_DESATIVADAS)
   ingredientes: IngredienteSeed[];
 }
 
@@ -630,6 +642,12 @@ const CATEGORIA_DOCE = new Set([
 ]);
 
 const PISO_5_PIZZAS = new Set(["chocolate branco", "chocolate ao leite", "chocolate meio amargo", "nutella"]);
+
+// Sabores que saíram do cardápio — continuam cadastrados (histórico/
+// auditoria) mas com ativo=false, o que já os exclui automaticamente do
+// motor de sugestão (listSabores() só busca ativo=true). Adicionar aqui
+// em vez de simplesmente pular a aba, senão um re-import reativaria.
+const SHEETS_DESATIVADAS = new Set(["camarao"]); // Camarão não é mais vendido
 
 // Alias: nome do ingrediente como aparece na ficha técnica (normalizado)
 // → nome do produto cadastrado (como aparece em Contagemxcompras.xlsx ou
@@ -810,6 +828,7 @@ async function importarSaboresPisoSeguranca(idPorNome: Map<string, string>, cami
       tipo: "piso_seguranca",
       categoria,
       pisoMinimoPizzas: PISO_5_PIZZAS.has(chaveAba) ? 5 : undefined,
+      ativo: !SHEETS_DESATIVADAS.has(chaveAba),
       ingredientes,
     };
 
@@ -835,7 +854,7 @@ async function criarSaborComIngredientes(
         categoria: sabor.categoria,
         piso_minimo_pizzas: sabor.pisoMinimoPizzas ?? null,
         queijo_override_kg: sabor.queijoOverrideKg ?? null,
-        ativo: true,
+        ativo: sabor.ativo ?? true,
       },
       { onConflict: "nome" }
     )

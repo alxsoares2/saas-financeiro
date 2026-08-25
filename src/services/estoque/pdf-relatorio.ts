@@ -1,4 +1,5 @@
 import puppeteer from "puppeteer";
+import { LIMITE_CUSTO_POR_PIZZA_REAIS } from "./sugestao-compra.js";
 import { Produto, SugestaoCompraResultado } from "./types.js";
 
 function brl(v: number): string {
@@ -103,6 +104,16 @@ function estiloComumSugestao(): string {
   .total-geral-label { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.85; }
   .total-geral-valor { font-size: 24px; font-weight: 800; }
   .total-geral-nota { font-size: 10px; opacity: 0.75; margin-top: 4px; }
+  .alerta-custo {
+    background: #fef2f2;
+    border: 2px solid #dc2626;
+    color: #991b1b;
+    border-radius: 12px;
+    padding: 14px 18px;
+    margin-bottom: 16px;
+    font-weight: 700;
+    font-size: 12px;
+  }
   .rodape { margin-top: 16px; text-align: center; font-size: 10px; color: #94a3b8; }
   `;
 }
@@ -122,7 +133,19 @@ function gerarHtml(resultado: SugestaoCompraResultado): string {
   }
   if (paginas.length === 0) paginas.push([]);
 
+  // Mesmo sendo "consulta sob demanda" (não a mensagem padrão do grupo),
+  // o PDF não deve parecer pronto pra aprovar quando o custo por pizza
+  // estourou o limite — banner de alerta visível logo no topo.
+  const bannerAlerta = resultado.alertaCustoExcedido
+    ? `
+    <div class="alerta-custo">
+      ⚠️ CUSTO FORA DO ESPERADO — R$ ${brl(resultado.custoPorPizza ?? 0)}/pizza (limite: R$ ${brl(LIMITE_CUSTO_POR_PIZZA_REAIS)}/pizza).
+      Revisão manual necessária antes de comprar com base neste relatório.
+    </div>`
+    : "";
+
   const headerPrincipal = `
+    ${bannerAlerta}
     <div class="header">
       <div class="h1" style="font-size:22px;font-weight:700;color:white">SUGESTÃO DE COMPRA — ESTOQUE</div>
       <div class="meta">

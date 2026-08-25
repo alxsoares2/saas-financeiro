@@ -12,11 +12,16 @@
 //    quanto de frango/calabresa/requeijão comprar pros âncoras fica com o
 //    time — o relatório apenas lista o estoque atual desses insumos como
 //    referência, sem sugestão automática.
-// 2. Os sabores piso_seguranca SOMAM ao total de pizzas salgadas/doces
-//    pra dimensionar os itens universais (massa/molho/queijo/caixa/lacre/
-//    orégano) — são pizzas adicionais à meta principal, não um subconjunto
-//    dela (seção 6: "garantir estoque mínimo... pra no mínimo 3-4 pizzas",
-//    tratado como piso adicional, não incluído na meta pedida ao time).
+// 2. [CORRIGIDO — antes somava, causava dupla contagem] Os itens
+//    UNIVERSAIS (massa/molho/queijo/caixa/lacre/orégano) são dimensionados
+//    SÓ pela meta principal (qtdPizzasBasilico + qtdPizzasPopulares) — o
+//    piso de segurança por sabor NUNCA entra nesse total. Antes, cada uma
+//    das ~34 sabores de piso somava seu piso mínimo ao total de pizzas
+//    usado pros universais, inflando artificialmente o "necessário" de
+//    praticamente todo item do relatório (farinha, queijo, caixa etc.)
+//    bem acima do que a meta pedida realmente precisa. O piso de segurança
+//    continua existindo, mas só afeta os ingredientes EXCLUSIVOS de cada
+//    sabor individual (seção 3 abaixo) — nunca os universais compartilhados.
 // 3. Refrigerante Basílico assume proporção normal:zero de 2:1 (spec diz
 //    "o bot já assume", sem confirmar o valor exato — seção 9). Ajustável
 //    em REFRIGERANTE_BASILICO_PROPORCAO_ZERO abaixo.
@@ -59,6 +64,13 @@
 //    quantidade fica na unidade da receita mesmo (mais visível o
 //    descompasso do que escondê-lo) — ver script scripts/_audit_padroes*.ts
 //    pra levantar esses casos.
+// 9. Failsafe de custo por pizza: valorTotalEstimado ÷ (qtdPizzasBasilico +
+//    qtdPizzasPopulares) — se passar de LIMITE_CUSTO_POR_PIZZA_REAIS, o
+//    resultado vem marcado com alertaCustoExcedido=true. Quem consome o
+//    resultado (formatarSugestaoWhatsApp, comandos de WhatsApp) deve tratar
+//    isso como "não mandar como se estivesse pronto pra aprovar" — vira um
+//    alerta pedindo revisão manual, não a lista de compra normal. O cálculo
+//    completo continua disponível (ex: em PDF) pra quem for investigar.
 import {
   criarMetaProducao,
   getMembrosGrupo,
@@ -88,6 +100,7 @@ export const REFRIGERANTE_BASILICO_PROPORCAO_ZERO = 1 / 3; // 2:1 normal:zero
 export const PISO_MINIMO_PADRAO_PIZZAS = 4;
 export const PISO_MINIMO_DOCE_PIZZAS = 5;
 export const MARGEM_INGREDIENTE_COMPARTILHADO = 1.5;
+export const LIMITE_CUSTO_POR_PIZZA_REAIS = 40;
 
 interface Acumulador {
   chave: string; // "produto:<id>" ou "grupo:<id>"
@@ -252,20 +265,14 @@ export async function calcularSugestaoCompra(params: ParametrosSugestao): Promis
     fichasPorManipulado.set(f.produto_manipulado_id, lista);
   }
 
-  // ── 1) Total de pizzas por categoria (salgada/doce) ──────────────────────
-  // Salgada = meta principal (âncoras, por marca) + piso de segurança de
-  // cada sabor salgado não-âncora (adicional, ver premissa 2 acima).
+  // ── 1) Total de pizzas pra dimensionar os itens UNIVERSAIS ──────────────
+  // Só a meta principal (ver premissa 2 corrigida) — piso de segurança
+  // NUNCA entra aqui, só nos ingredientes exclusivos de cada sabor (seção 3).
   const pisoSabores = sabores.filter((s) => s.tipo === "piso_seguranca" && s.ativo);
-  const pisoPizzasSalgadas = pisoSabores
-    .filter((s) => s.categoria === "salgada")
-    .reduce((acc, s) => acc + (s.piso_minimo_pizzas ?? PISO_MINIMO_PADRAO_PIZZAS), 0);
-  const pisoPizzasDoces = pisoSabores
-    .filter((s) => s.categoria === "doce")
-    .reduce((acc, s) => acc + (s.piso_minimo_pizzas ?? PISO_MINIMO_DOCE_PIZZAS), 0);
 
-  const totalSalgadaBasilico = params.qtdPizzasBasilico + pisoPizzasSalgadas;
+  const totalSalgadaBasilico = params.qtdPizzasBasilico;
   const totalSalgadaPopulares = params.qtdPizzasPopulares;
-  const totalDoce = pisoPizzasDoces; // meta interativa não cobre sobremesas (spec seção 7)
+  const totalDoce = 0; // meta interativa não cobre sobremesas (spec seção 7) e piso não inflaciona mais o universal
 
   const acumulador = new Map<string, Acumulador>();
 
@@ -483,6 +490,11 @@ export async function calcularSugestaoCompra(params: ParametrosSugestao): Promis
     });
   }
 
+  // ── 9) Failsafe de custo por pizza (ver premissa 9) ──────────────────
+  const totalPizzasPedidas = params.qtdPizzasBasilico + params.qtdPizzasPopulares;
+  const custoPorPizza = totalPizzasPedidas > 0 ? round(valorTotalEstimado / totalPizzasPedidas) : null;
+  const alertaCustoExcedido = custoPorPizza != null && custoPorPizza > LIMITE_CUSTO_POR_PIZZA_REAIS;
+
   return {
     meta: {
       validoAte: params.validoAte ?? null,
@@ -492,6 +504,8 @@ export async function calcularSugestaoCompra(params: ParametrosSugestao): Promis
     itens,
     valorTotalEstimado: round(valorTotalEstimado),
     itensComPrecoDesconhecido,
+    custoPorPizza,
+    alertaCustoExcedido,
   };
 }
 
@@ -554,7 +568,30 @@ function brl(v: number): string {
   return v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+// Quando o custo por pizza estoura o limite, o grupo recebe um ALERTA em
+// vez da lista de compra pronta — não deve parecer "pronto pra aprovar"
+// (ver premissa 9). O relatório completo continua acessível via PDF.
+export function formatarAlertaCustoWhatsApp(resultado: SugestaoCompraResultado): string {
+  const { meta, valorTotalEstimado, custoPorPizza } = resultado;
+  const totalPizzas = meta.qtdPizzasBasilico + meta.qtdPizzasPopulares;
+
+  return [
+    `⚠️ *CUSTO FORA DO ESPERADO — REVISÃO MANUAL NECESSÁRIA*`,
+    "",
+    `A sugestão de compra pra ${totalPizzas} pizzas (Basílico: ${meta.qtdPizzasBasilico} · Populares: ${meta.qtdPizzasPopulares}) saiu em`,
+    `*R$ ${brl(custoPorPizza ?? 0)} por pizza* — acima do limite de R$ ${brl(LIMITE_CUSTO_POR_PIZZA_REAIS)}/pizza.`,
+    "",
+    `Total estimado: R$ ${brl(valorTotalEstimado)}`,
+    "",
+    `*Não compre com base nesse número ainda.* Confira o relatório detalhado (comando *sugestao ${meta.qtdPizzasBasilico} ${meta.qtdPizzasPopulares} pdf*) antes de decidir — pode ser estoque muito baixo puxando junto insumos que não precisavam entrar, preço desatualizado, ou item duplicado.`,
+  ].join("\n");
+}
+
 export function formatarSugestaoWhatsApp(resultado: SugestaoCompraResultado): string {
+  if (resultado.alertaCustoExcedido) {
+    return formatarAlertaCustoWhatsApp(resultado);
+  }
+
   const { meta, itens, valorTotalEstimado, itensComPrecoDesconhecido } = resultado;
   const comFalta = itens.filter((i) => i.falta > 0);
 
