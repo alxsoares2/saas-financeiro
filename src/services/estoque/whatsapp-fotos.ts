@@ -33,6 +33,14 @@ type MimeTypeImagem = "image/jpeg" | "image/png" | "image/webp" | "image/gif";
 // direto sem passar por confirmação — só usado na lista impressa.
 const LIMIAR_AUTO_REGISTRO = 0.8;
 
+// Acima desse tanto de produtos distintos numa foto de PRODUTO FÍSICO
+// (não lista — ali é normal ter muita linha), sugere fotos separadas —
+// fotos com muitos itens amontoados são exatamente onde a contagem visual
+// mais erra (objetos sobrepostos/parcialmente escondidos).
+const LIMIAR_ITENS_PARA_DICA_SEGMENTACAO = 2;
+const DICA_SEGMENTACAO =
+  "💡 _Pra contagens mais precisas, tente fotos separadas por categoria (ex: só os refrigerantes, só os laticínios), com os itens de frente e sem sobrepor uns aos outros._";
+
 interface ItemPendente {
   nomeLido: string;
   quantidade: number;
@@ -175,6 +183,10 @@ async function processarItensVisuais(
       linhas.push(`   ${idx + 1}. ${alvo}: ${brl(item.quantidade)}${item.unidade ? ` ${item.unidade}` : ""}`);
     });
     linhas.push("", "Responda *sim* pra confirmar todos, *não* pra descartar, ou *sim 1,3* pra confirmar só os números 1 e 3.");
+  }
+
+  if (origem === "foto_produto" && itensResolvidos.length > LIMIAR_ITENS_PARA_DICA_SEGMENTACAO) {
+    linhas.push("", DICA_SEGMENTACAO);
   }
 
   await sendTextMessage(chatId, linhas.join("\n"));

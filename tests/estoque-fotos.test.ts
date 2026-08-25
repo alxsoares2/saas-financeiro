@@ -129,10 +129,23 @@ describe("handleFotoEstoque — produto físico", () => {
     expect(texto).toContain("Requeijão Genérico");
     expect(texto).toContain("Tomate");
     expect(texto).toContain("3 itens precisam de confirmação");
+    expect(texto).toContain("fotos separadas por categoria"); // dica de segmentação (>2 itens)
 
     const confirmado = await handleRespostaConfirmacaoFoto("chat-geladeira", "sim", "Fulano");
     expect(confirmado).toBe(true);
     expect(mockRegistrarMovimentacao).toHaveBeenCalledTimes(3);
+  });
+
+  it("NÃO mostra a dica de segmentação com poucos itens (<=2)", async () => {
+    mockTriarFoto.mockResolvedValue({ tipo: "produto_fisico", confianca: "alta" });
+    mockContarProdutosVisiveis.mockResolvedValue({
+      itens: [{ nome: "Queijo Mussarela", quantidade: 4, unidade: "kg", confianca: "alta" }],
+    });
+
+    await handleFotoEstoque("chat-poucositens", buffer, "image/jpeg", undefined, "https://foto.url/poucos.jpg");
+
+    const texto = mockSendTextMessage.mock.calls[0][1];
+    expect(texto).not.toContain("fotos separadas por categoria");
   });
 
   it("não confirma nada quando não consegue identificar produto nem contar", async () => {

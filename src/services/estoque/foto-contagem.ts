@@ -5,11 +5,17 @@
 // de erro). Reaproveitado aqui de propósito, pra manter só um padrão de
 // chamada de IA com imagem no projeto inteiro.
 //
-// Modelo: gpt-4o-mini em todas as 3 chamadas (pedido explicitamente —
-// "modelo mini com visão"). Se a OCR de lista manuscrita se mostrar
-// imprecisa na prática, o mesmo upgrade já usado pro cupom fiscal
-// (gpt-4o sem "mini" + detail:"high", ver transcreverCupom em claude.ts)
-// é o caminho natural — trocar seria uma linha, não redesenho.
+// Modelo: gpt-4o-mini na triagem e na leitura de lista (texto — o modelo
+// mini já lê bem letra impressa/manuscrita). A CONTAGEM DE PRODUTO FÍSICO
+// usa gpt-4o (sem "mini") + detail:"high" — mesmo upgrade já usado pro
+// cupom fiscal em claude.ts (transcreverCupom): teste real mostrou o mini
+// separando mal objetos sobrepostos/parcialmente escondidos numa mesma
+// foto (contava 2 garrafas empilhadas como 1, ignorava uma parcialmente
+// coberta por outra) — limitação de visão computacional em fotos com
+// vários itens amontoados, não algo que ajuste de prompt sozinho resolve.
+// Custa mais por imagem, mas é exatamente a troca de precisão por custo
+// que faz sentido aqui (poucas fotos de produto físico por dia, cada uma
+// grava estoque real).
 import OpenAI from "openai";
 
 type MimeTypeImagem = "image/jpeg" | "image/png" | "image/webp" | "image/gif";
@@ -35,16 +41,26 @@ function limparJson(raw: string): string {
   return raw.trim().replace(/^```json\s*/i, "").replace(/```$/i, "");
 }
 
-async function chamarVisao(system: string, imageBuffer: Buffer, mimeType: MimeTypeImagem, textoUsuario: string, maxTokens = 1024): Promise<string> {
+async function chamarVisao(
+  system: string,
+  imageBuffer: Buffer,
+  mimeType: MimeTypeImagem,
+  textoUsuario: string,
+  maxTokens = 1024,
+  opcoes?: { modelo?: string; detail?: "auto" | "low" | "high" }
+): Promise<string> {
+  const imageUrl: { url: string; detail?: "auto" | "low" | "high" } = { url: paraDataUri(imageBuffer, mimeType) };
+  if (opcoes?.detail) imageUrl.detail = opcoes.detail;
+
   const response = await getClient().chat.completions.create({
-    model: "gpt-4o-mini",
+    model: opcoes?.modelo ?? "gpt-4o-mini",
     max_tokens: maxTokens,
     messages: [
       { role: "system", content: system },
       {
         role: "user",
         content: [
-          { type: "image_url", image_url: { url: paraDataUri(imageBuffer, mimeType) } },
+          { type: "image_url", image_url: imageUrl },
           { type: "text", text: textoUsuario },
         ],
       },
@@ -192,7 +208,11 @@ export async function contarProdutosVisiveis(
   caption?: string
 ): Promise<ResultadoExtracaoLista> {
   const contexto = caption ? `Legenda enviada junto: "${caption}"` : "Identifique e conte os produtos visíveis nesta foto.";
-  const raw = await chamarVisao(contagemFisicaSystem(referenciaPadroes), imageBuffer, mimeType, contexto, 1024);
+  // gpt-4o (não o -mini) + detail "high" — ver comentário no topo do arquivo.
+  const raw = await chamarVisao(contagemFisicaSystem(referenciaPadroes), imageBuffer, mimeType, contexto, 1024, {
+    modelo: "gpt-4o",
+    detail: "high",
+  });
   try {
     const parsed = JSON.parse(limparJson(raw));
     if (!Array.isArray(parsed.itens)) return { itens: [] };
