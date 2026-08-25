@@ -122,6 +122,7 @@ const MANIPULADOS_NA_CONTAGEM = new Set([
   "file de peito de frango desfiado",
   "linguica calabresa fatiada",
   "peito de peru c cream cheese", // pré-mistura produzida internamente (peito + cream cheese) — ver FICHAS_SEED
+  "cebola caramelizada", // produzida internamente (cebola crua + preparo) — ver FICHAS_SEED
 ]);
 
 function lerContagem(caminho: string): LinhaContagem[] {
@@ -347,6 +348,20 @@ const FICHAS_SEED: FichaSeed[] = [
   // "por 1kg de mistura pronta".
   { manipulado: "Peito de peru c/ cream cheese", bruto: "Peito de Peru Fatiado", quantidade: 0.14 / 0.31, observacoes: "proporção da ficha técnica do sabor Peito peru c/ Cream Cheese (0,14kg peito + 0,17kg cream cheese = 0,31kg de mistura)" },
   { manipulado: "Peito de peru c/ cream cheese", bruto: "Cream Cheese Polenghi/Catupiry", quantidade: 0.17 / 0.31, observacoes: "proporção da ficha técnica do sabor Peito peru c/ Cream Cheese (0,14kg peito + 0,17kg cream cheese = 0,31kg de mistura)" },
+
+  // Cebola Caramelizada — produzida internamente (cebola crua + preparo),
+  // reclassificada de bruto pra manipulado. ASSUMIDO (não temos a receita
+  // real do time — revisar quantidades e o rendimento):
+  //   - Rendimento de 60% no preparo (perde ~40% de peso caramelizando —
+  //     bem mais que os 5% de trituração/fatiamento, porque aqui envolve
+  //     redução por cozimento, não só corte/moagem).
+  //   - Óleo/açúcar/sal em quantidades pequenas típicas de refogado, só
+  //     pra não deixar de fora do custo — ajustar se a receita real usar
+  //     proporção diferente.
+  { manipulado: "Cebola Caramelizada", bruto: "Cebola Branca", quantidade: 1 / 0.6, perdaPct: 40, observacoes: "ASSUMIDO — rendimento de 60% no preparo (perde ~40% de peso), confirmar com o time" },
+  { manipulado: "Cebola Caramelizada", bruto: "Óleo de Soja 900ml", quantidade: 0.05, observacoes: "ASSUMIDO — quantidade típica de óleo pro refogado, confirmar com o time" },
+  { manipulado: "Cebola Caramelizada", bruto: "Açúcar Triturado", quantidade: 0.02, observacoes: "ASSUMIDO — açúcar pra ajudar a caramelizar, confirmar com o time" },
+  { manipulado: "Cebola Caramelizada", bruto: "Sal Moído", quantidade: 0.01, observacoes: "ASSUMIDO — tempero do preparo, confirmar com o time" },
 ];
 
 async function importarFichasTecnicas(idPorNome: Map<string, string>): Promise<void> {
