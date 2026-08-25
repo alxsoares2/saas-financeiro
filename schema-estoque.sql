@@ -51,6 +51,7 @@ create table estoque.padroes_embalagem (
   unidades_por_padrao numeric(10,3) not null,  -- ex: 20 (pacotes por caixa), 30 (ovos por bandeja)
   peso_ou_volume_por_unidade numeric(10,3),    -- ex: 0.2 (kg por pacote), opcional
   multiplo_minimo numeric(10,3),           -- ex: 4 (queijo em barra só compra em múltiplos de 4kg)
+  quantidade_minima numeric(10,3),         -- ex: 1 (Pepperoni: mínimo 1kg, depois sobe de 0,5kg — ver migration 013)
   ativo boolean not null default true,
   created_at timestamptz not null default now()
 );

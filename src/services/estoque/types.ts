@@ -32,6 +32,7 @@ export interface PadraoEmbalagem {
   unidades_por_padrao: number;
   peso_ou_volume_por_unidade: number | null;
   multiplo_minimo: number | null;
+  quantidade_minima: number | null; // piso de compra diferente do incremento (ex: Pepperoni mín. 1kg, passos de 0,5kg)
   ativo: boolean;
 }
 

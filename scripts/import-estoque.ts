@@ -121,6 +121,7 @@ const MANIPULADOS_NA_CONTAGEM = new Set([
   "molho de tomate",
   "file de peito de frango desfiado",
   "linguica calabresa fatiada",
+  "peito de peru c cream cheese", // pré-mistura produzida internamente (peito + cream cheese) — ver FICHAS_SEED
 ]);
 
 function lerContagem(caminho: string): LinhaContagem[] {
@@ -168,16 +169,19 @@ async function importarProdutosBase(linhas: LinhaContagem[]): Promise<Map<string
   const idPorNomeNormalizado = new Map<string, string>();
 
   for (const linha of linhas) {
-    const tipo = MANIPULADOS_NA_CONTAGEM.has(normalizar(linha.item)) ? "manipulado" : "bruto";
+    const nomeFinal = RENOMEAR_PRODUTOS[linha.item] ?? linha.item;
+    const chaveNormalizada = normalizar(nomeFinal);
+    const tipo = MANIPULADOS_NA_CONTAGEM.has(chaveNormalizada) ? "manipulado" : "bruto";
     const id = await upsertProdutoPreservandoEstoque({
-      nome: linha.item,
+      nome: nomeFinal,
       unidade: linha.unidade,
       tipo,
       preco_unitario: linha.valor,
       estoque_atual: linha.estoque,
       observacoes: linha.observacoes,
+      ativo: !PRODUTOS_DESATIVADOS.has(chaveNormalizada),
     });
-    idPorNomeNormalizado.set(normalizar(linha.item), id);
+    idPorNomeNormalizado.set(chaveNormalizada, id);
   }
 
   console.log(`[produtos] ${linhas.length} produtos importados de Contagemxcompras.xlsx`);
@@ -197,6 +201,7 @@ async function upsertProdutoPreservandoEstoque(produto: {
   marca?: "basilico" | "populares" | null;
   formato_saida?: string | null;
   observacoes?: string | null;
+  ativo?: boolean; // default true — false pra produto fora do cardápio (ver PRODUTOS_DESATIVADOS)
 }): Promise<string> {
   const { data: existente } = await client.from("produtos").select("id").ilike("nome", produto.nome).maybeSingle();
 
@@ -211,6 +216,7 @@ async function upsertProdutoPreservandoEstoque(produto: {
         marca: produto.marca ?? null,
         formato_saida: produto.formato_saida ?? null,
         observacoes: produto.observacoes ?? null,
+        ativo: produto.ativo ?? true,
         updated_at: new Date().toISOString(),
       })
       .eq("id", existente.id);
@@ -231,12 +237,38 @@ async function upsertProdutoPreservandoEstoque(produto: {
       marca: produto.marca ?? null,
       formato_saida: produto.formato_saida ?? null,
       observacoes: produto.observacoes ?? null,
+      ativo: produto.ativo ?? true,
     })
     .select("id")
     .single();
   if (error) throw new Error(`Erro ao criar produto "${produto.nome}": ${error.message}`);
   return data.id;
 }
+
+// Produtos renomeados desde a primeira importação — roda ANTES de tudo
+// (mesmo antes de ler a planilha), pra renomear a linha já existente no
+// banco em vez de criar uma duplicata órfã. Chave = nome antigo (como
+// ainda aparece em Contagemxcompras.xlsx), valor = nome novo.
+const RENOMEAR_PRODUTOS: Record<string, string> = {
+  "Caldo de Galinha 1kg": "Caldo de Galinha", // não é bem 1kg — nome corrigido
+};
+
+async function renomearProdutosLegado(): Promise<void> {
+  for (const [antigo, novo] of Object.entries(RENOMEAR_PRODUTOS)) {
+    const { data: existente } = await client.from("produtos").select("id, nome").ilike("nome", antigo).maybeSingle();
+    if (!existente || existente.nome === novo) continue;
+    const { error } = await client.from("produtos").update({ nome: novo }).eq("id", existente.id);
+    if (error) throw new Error(`Erro ao renomear produto "${antigo}" -> "${novo}": ${error.message}`);
+    console.log(`[produtos] renomeado: "${antigo}" -> "${novo}"`);
+  }
+}
+
+// Produtos vindos de Contagemxcompras.xlsx que saíram de uso — continuam
+// cadastrados (histórico) mas com ativo=false. Chave = nome normalizado.
+const PRODUTOS_DESATIVADOS = new Set([
+  "massa de pizza pronta", // não é mais usada como backup
+  "camarao eviscerado 41 50", // sabor Camarão saiu do cardápio (confirmado)
+]);
 
 // ═══════════════════════════════════════════════════════════════════════
 // PASSO 2 — Produtos novos que a planilha de contagem não tinha
@@ -245,7 +277,7 @@ async function upsertProdutoPreservandoEstoque(produto: {
 async function importarProdutosNovos(): Promise<void> {
   const novos: Parameters<typeof upsertProdutoPreservandoEstoque>[0][] = [
     { nome: "Alho", unidade: "kg", tipo: "bruto", categoria: "hortifruti", observacoes: "criado automaticamente via import — não estava em Contagemxcompras.xlsx" },
-    { nome: "Azeitona Preta sem Caroço", unidade: "kg", tipo: "bruto", categoria: "mercearia", observacoes: "criado automaticamente via import" },
+    { nome: "Azeitona Preta sem Caroço", unidade: "kg", tipo: "bruto", categoria: "mercearia", observacoes: "criado automaticamente via import — DESATIVADO, não é mais usado (removido de todas as fichas técnicas)", ativo: false },
     { nome: "Molho Barbecue", unidade: "kg", tipo: "bruto", categoria: "molhos", observacoes: "criado automaticamente via import" },
     { nome: "Pimentão Amarelo", unidade: "kg", tipo: "bruto", categoria: "hortifruti", observacoes: "criado automaticamente via import — correção da spec (Portuguesa leva verde + amarelo)" },
     { nome: "Linguiça Calabresa", unidade: "kg", tipo: "bruto", categoria: "frios", observacoes: "insumo bruto (não fatiado) — input da transformação pra Linguiça Calabresa Fatiada" },
@@ -296,6 +328,14 @@ const FICHAS_SEED: FichaSeed[] = [
   { manipulado: "Queijo Triturado", bruto: "Queijo Mussarela", quantidade: 1 / 0.95, perdaPct: 5, observacoes: "5% de perda padrão na trituração" },
   { manipulado: "Filé de Peito de Frango Desfiado", bruto: "Filé de Peito de Frango", quantidade: 1 / 0.95, perdaPct: 5, observacoes: "5% de perda padrão no cozimento/desfiar (simplificado — planilha de custeio original usa outro rendimento, que mistura perda de apara/osso)" },
   { manipulado: "Linguiça Calabresa Fatiada", bruto: "Linguiça Calabresa", quantidade: 1 / 0.95, perdaPct: 5, observacoes: "5% de perda padrão no fatiamento" },
+
+  // Peito de peru c/ cream cheese — pré-mistura produzida internamente,
+  // reclassificada de bruto pra manipulado. Proporção tirada da própria
+  // ficha técnica do sabor "Peito peru c/ Cream Cheese" (0,14kg peito +
+  // 0,17kg cream cheese por pizza = 0,31kg da mistura), normalizada pra
+  // "por 1kg de mistura pronta".
+  { manipulado: "Peito de peru c/ cream cheese", bruto: "Peito de Peru Fatiado", quantidade: 0.14 / 0.31, observacoes: "proporção da ficha técnica do sabor Peito peru c/ Cream Cheese (0,14kg peito + 0,17kg cream cheese = 0,31kg de mistura)" },
+  { manipulado: "Peito de peru c/ cream cheese", bruto: "Cream Cheese Polenghi/Catupiry", quantidade: 0.17 / 0.31, observacoes: "proporção da ficha técnica do sabor Peito peru c/ Cream Cheese (0,14kg peito + 0,17kg cream cheese = 0,31kg de mistura)" },
 ];
 
 async function importarFichasTecnicas(idPorNome: Map<string, string>): Promise<void> {
@@ -404,6 +444,7 @@ interface PadraoSeed {
   nomePadrao: string;
   pesoOuVolumePorUnidade: number;
   multiploMinimo?: number;
+  quantidadeMinima?: number; // piso de compra diferente do incremento (ex: Pepperoni — mín. 1kg, passos de 0,5kg)
   unidadesPorPadrao?: number; // pra conversão de contagem (ex: ovos por bandeja), não usado no arredondamento de compra
 }
 
@@ -453,6 +494,55 @@ const PADROES_SEED: PadraoSeed[] = [
   { produto: "Chimichurri", nomePadrao: "Fração 0,1kg (histórico de compra)", pesoOuVolumePorUnidade: 0.1, unidadesPorPadrao: 1 },
   { produto: "Peito de Peru Fatiado", nomePadrao: "Fração 0,3kg (histórico de compra)", pesoOuVolumePorUnidade: 0.3, unidadesPorPadrao: 1 },
   { produto: "Queijo Parmesão", nomePadrao: "Fração 0,2kg (histórico de compra)", pesoOuVolumePorUnidade: 0.2, unidadesPorPadrao: 1 },
+
+  // Itens de açougue/hortifruti soltos — fracionado livre, mínimo 100g
+  // (revisão manual do time, seção "Levantar itens sem padrão").
+  { produto: "Queijo Gorgonzola", nomePadrao: "Fracionado, mínimo 100g", pesoOuVolumePorUnidade: 0.1, unidadesPorPadrao: 1 },
+  { produto: "Castanha de Caju", nomePadrao: "Fracionado, mínimo 100g", pesoOuVolumePorUnidade: 0.1, unidadesPorPadrao: 1 },
+  { produto: "Lombinho Canadense Fatiado", nomePadrao: "Fracionado, mínimo 100g", pesoOuVolumePorUnidade: 0.1, unidadesPorPadrao: 1 },
+  { produto: "Bacon em Cubos", nomePadrao: "Fracionado, mínimo 100g", pesoOuVolumePorUnidade: 0.1, unidadesPorPadrao: 1 },
+  { produto: "Morango", nomePadrao: "Fracionado, mínimo 100g", pesoOuVolumePorUnidade: 0.1, unidadesPorPadrao: 1 },
+  { produto: "Banana Pacovan", nomePadrao: "Fracionado, mínimo 100g", pesoOuVolumePorUnidade: 0.1, unidadesPorPadrao: 1 },
+  { produto: "Milho", nomePadrao: "Fracionado, mínimo 100g", pesoOuVolumePorUnidade: 0.1, unidadesPorPadrao: 1 },
+  { produto: "Brócolis", nomePadrao: "Fracionado, mínimo 100g", pesoOuVolumePorUnidade: 0.1, unidadesPorPadrao: 1 },
+  { produto: "Alho", nomePadrao: "Fracionado, mínimo 100g", pesoOuVolumePorUnidade: 0.1, unidadesPorPadrao: 1 },
+  { produto: "Coloral", nomePadrao: "Fracionado, mínimo 100g", pesoOuVolumePorUnidade: 0.1, unidadesPorPadrao: 1 },
+  { produto: "Pimentão Verde", nomePadrao: "Fracionado, mínimo 100g", pesoOuVolumePorUnidade: 0.1, unidadesPorPadrao: 1 },
+  { produto: "Pimentão Amarelo", nomePadrao: "Fracionado, mínimo 100g", pesoOuVolumePorUnidade: 0.1, unidadesPorPadrao: 1 },
+
+  // Itens de mercearia soltos — fracionado livre, mínimo 1kg (documenta
+  // explicitamente o que já era o comportamento padrão pra item sem
+  // padrão cadastrado — deixa de aparecer como "sem padrão" na auditoria).
+  { produto: "Cebola Branca", nomePadrao: "Fracionado, mínimo 1kg", pesoOuVolumePorUnidade: 1, unidadesPorPadrao: 1 },
+  { produto: "Farinha de Trigo", nomePadrao: "Fracionado, mínimo 1kg", pesoOuVolumePorUnidade: 1, unidadesPorPadrao: 1 },
+  { produto: "Açúcar Triturado", nomePadrao: "Fracionado, mínimo 1kg", pesoOuVolumePorUnidade: 1, unidadesPorPadrao: 1 },
+  { produto: "Sal Moído", nomePadrao: "Fracionado, mínimo 1kg", pesoOuVolumePorUnidade: 1, unidadesPorPadrao: 1 },
+  { produto: "Fiambre", nomePadrao: "Fracionado, mínimo 1kg", pesoOuVolumePorUnidade: 1, unidadesPorPadrao: 1 },
+
+  // Pepperoni: nunca compra menos de 1kg; acima disso sobe de 0,5 em
+  // 0,5kg (1 / 1,5 / 2 / 2,5kg...) — precisa do campo quantidade_minima
+  // (migration 013), os outros campos sozinhos não expressam "piso
+  // diferente do passo".
+  { produto: "Pepperoni", nomePadrao: "Mínimo 1kg, passos de 0,5kg", pesoOuVolumePorUnidade: 0.5, quantidadeMinima: 1, unidadesPorPadrao: 1 },
+
+  // Manjericão: unidade fechada, sempre 1 maço inteiro por vez — já é o
+  // comportamento padrão pra unidade discreta (maço) sem múltiplos, esse
+  // registro só documenta/confirma (peso estimado ~50g, mesmo caveat de
+  // antes, ver bloco ESTIMATIVAS acima — Manjericão já está lá).
+
+  // Embalagens fechadas de tamanho fixo — arredonda pra unidades inteiras
+  // da embalagem (spec seção 10).
+  { produto: "Molho Barbecue", nomePadrao: "Frasco 300g", pesoOuVolumePorUnidade: 0.3, unidadesPorPadrao: 1 },
+  { produto: "Mozzana Pizza", nomePadrao: "Embalagem 2kg", pesoOuVolumePorUnidade: 2, unidadesPorPadrao: 1 },
+  { produto: "Doce de Leite Bisnaga 1,001kg", nomePadrao: "Bisnaga ~1kg", pesoOuVolumePorUnidade: 1.001, unidadesPorPadrao: 1 },
+  { produto: "Leite Condensado 320g", nomePadrao: "Lata 320g", pesoOuVolumePorUnidade: 0.32, unidadesPorPadrao: 1 },
+  {
+    produto: "Caldo de Galinha", // renomeado de "Caldo de Galinha 1kg" (ver RENOMEAR_PRODUTOS) — peso real do
+    nomePadrao: "Pacote fechado (peso estimado 1kg — CONFIRMAR)", // pacote não confirmado, só o nome antigo sugeria 1kg
+    pesoOuVolumePorUnidade: 1,
+    unidadesPorPadrao: 1,
+  },
+  { produto: "Bobina de Impressão Fiscal", nomePadrao: "Rolo inteiro", pesoOuVolumePorUnidade: 1, unidadesPorPadrao: 1 },
 ];
 
 async function importarPadroesEmbalagem(idPorNome: Map<string, string>): Promise<void> {
@@ -467,6 +557,7 @@ async function importarPadroesEmbalagem(idPorNome: Map<string, string>): Promise
       unidades_por_padrao: p.unidadesPorPadrao ?? 1,
       peso_ou_volume_por_unidade: p.pesoOuVolumePorUnidade,
       multiplo_minimo: p.multiploMinimo ?? null,
+      quantidade_minima: p.quantidadeMinima ?? null,
     };
   });
 
@@ -649,6 +740,16 @@ const PISO_5_PIZZAS = new Set(["chocolate branco", "chocolate ao leite", "chocol
 // em vez de simplesmente pular a aba, senão um re-import reativaria.
 const SHEETS_DESATIVADAS = new Set(["camarao"]); // Camarão não é mais vendido
 
+// Override pontual: em vez da extração genérica (ingrediente por
+// ingrediente via ALIAS_INGREDIENTES), esses sabores usam uma lista fixa
+// de ingredientes — caso do "Peito peru c/ Cream Cheese", cujos dois
+// ingredientes exclusivos (peito + cream cheese) viraram um manipulado só
+// ("Peito de peru c/ cream cheese", ver FICHAS_SEED), então o sabor passa
+// a consumir 1 ingrediente (a mistura) em vez de 2 (os componentes brutos).
+const INGREDIENTES_OVERRIDE: Record<string, IngredienteSeed[]> = {
+  "peito peru c cream cheese": [{ produto: "Peito de peru c/ cream cheese", quantidade: 0.14 + 0.17, unidade: "kg" }],
+};
+
 // Alias: nome do ingrediente como aparece na ficha técnica (normalizado)
 // → nome do produto cadastrado (como aparece em Contagemxcompras.xlsx ou
 // nos produtos novos do passo 2). Curado manualmente (não é fuzzy-match)
@@ -656,12 +757,12 @@ const SHEETS_DESATIVADAS = new Set(["camarao"]); // Camarão não é mais vendid
 // mais que automação aqui.
 const ALIAS_INGREDIENTES: Record<string, string> = {
   "alho": "Alho",
-  "azeitona preta s caroco": "Azeitona Preta sem Caroço",
+  "azeitona preta s caroco": "", // DESATIVADO — não usam mais, removido de todas as fichas
   "acucar triturado": "Açúcar Triturado",
   "bacon em cubos": "Bacon em Cubos",
   "banana": "Banana Pacovan",
   "brocolis": "Brócolis",
-  "caldo de galinha": "Caldo de Galinha 1kg",
+  "caldo de galinha": "Caldo de Galinha", // renomeado — era "Caldo de Galinha 1kg" (ver RENOMEAR_PRODUTOS)
   "camarao eviscerado 41 50": "Camarão Eviscerado 41/50",
   "canela": "Canela em Pó",
   "cebola": "Cebola Branca",
@@ -801,26 +902,28 @@ async function importarSaboresPisoSeguranca(idPorNome: Map<string, string>, cami
     const categoria: "salgada" | "doce" = CATEGORIA_DOCE.has(chaveAba) ? "doce" : "salgada";
     const nomeSabor = referencia.replace(/\s*Sal[aã]o\s*$/i, "").trim();
 
-    const ingredientes: IngredienteSeed[] = [];
-    for (const item of itens) {
-      const chaveIngrediente = normalizar(item.produto);
-      if (NOMES_UNIVERSAIS.has(chaveIngrediente)) continue; // já coberto por itens_universais
+    const ingredientes: IngredienteSeed[] = INGREDIENTES_OVERRIDE[chaveAba] ?? [];
+    if (!INGREDIENTES_OVERRIDE[chaveAba]) {
+      for (const item of itens) {
+        const chaveIngrediente = normalizar(item.produto);
+        if (NOMES_UNIVERSAIS.has(chaveIngrediente)) continue; // já coberto por itens_universais
 
-      const nomeProduto = ALIAS_INGREDIENTES[chaveIngrediente];
-      if (nomeProduto === undefined) {
-        console.warn(`  ⚠ sabor "${nomeSabor}": ingrediente "${item.produto}" sem alias cadastrado, pulando`);
-        ignoradosSemMatch++;
-        continue;
-      }
-      if (nomeProduto === "") continue; // alias marcado explicitamente pra ignorar (ex: "Caixa de Pizza")
+        const nomeProduto = ALIAS_INGREDIENTES[chaveIngrediente];
+        if (nomeProduto === undefined) {
+          console.warn(`  ⚠ sabor "${nomeSabor}": ingrediente "${item.produto}" sem alias cadastrado, pulando`);
+          ignoradosSemMatch++;
+          continue;
+        }
+        if (nomeProduto === "") continue; // alias marcado explicitamente pra ignorar (ex: "Caixa de Pizza")
 
-      const produtoId = idPorNome.get(normalizar(nomeProduto));
-      if (!produtoId) {
-        console.warn(`  ⚠ sabor "${nomeSabor}": produto "${nomeProduto}" (alias de "${item.produto}") não encontrado na base, pulando`);
-        ignoradosSemMatch++;
-        continue;
+        const produtoId = idPorNome.get(normalizar(nomeProduto));
+        if (!produtoId) {
+          console.warn(`  ⚠ sabor "${nomeSabor}": produto "${nomeProduto}" (alias de "${item.produto}") não encontrado na base, pulando`);
+          ignoradosSemMatch++;
+          continue;
+        }
+        ingredientes.push({ produto: nomeProduto, quantidade: item.qtd, unidade: item.unidade });
       }
-      ingredientes.push({ produto: nomeProduto, quantidade: item.qtd, unidade: item.unidade });
     }
 
     const sabor: SaborSeed = {
@@ -897,6 +1000,8 @@ async function main() {
   console.log(`Contagem: ${CAMINHO_CONTAGEM}`);
   console.log(`Fichas:   ${CAMINHO_FICHAS}`);
   console.log("");
+
+  await renomearProdutosLegado();
 
   const linhasContagem = lerContagem(CAMINHO_CONTAGEM);
   const idPorNome = await importarProdutosBase(linhasContagem);

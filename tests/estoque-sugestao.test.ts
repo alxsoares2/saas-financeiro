@@ -346,6 +346,7 @@ describe("calcularSugestaoCompra — padrão de embalagem", () => {
       unidades_por_padrao: 1,
       peso_ou_volume_por_unidade: 4,
       multiplo_minimo: null,
+      quantidade_minima: null,
       ativo: true,
     };
     mockListPadroes.mockResolvedValue([padrao]);
@@ -359,12 +360,46 @@ describe("calcularSugestaoCompra — padrão de embalagem", () => {
     expect(queijoItem.origemPadrao).toBe(padrao.nome_padrao);
   });
 
+  it("[quantidade_minima] respeita piso de compra diferente do incremento (Pepperoni: mín. 1kg, passos de 0,5kg)", async () => {
+    const pepperoni = produto({ id: "pepperoni", nome: "Pepperoni", estoque_atual: 0 });
+    mockListProdutos.mockResolvedValue([...produtos, pepperoni]);
+    mockListPadroes.mockResolvedValue([
+      {
+        id: "pp1",
+        produto_id: pepperoni.id,
+        nome_padrao: "Mínimo 1kg, passos de 0,5kg",
+        unidades_por_padrao: 1,
+        peso_ou_volume_por_unidade: 0.5,
+        multiplo_minimo: null,
+        quantidade_minima: 1,
+        ativo: true,
+      },
+    ]);
+    mockListSabores.mockResolvedValue([
+      { id: "s1", nome: "Sabor com pepperoni", tipo: "piso_seguranca", categoria: "salgada", piso_minimo_pizzas: 4, queijo_override_kg: null, ativo: true, observacoes: null },
+    ]);
+
+    // falta pequena (bem abaixo do mínimo) -> compra exatamente o mínimo, 1kg
+    mockListIngredientes.mockResolvedValue([
+      { id: "i1", sabor_id: "s1", produto_id: pepperoni.id, grupo_substituicao_id: null, quantidade: 0.08, unidade: "kg" },
+    ]);
+    const resultadoBaixo = await calcularSugestaoCompra({ qtdPizzasBasilico: 0, qtdPizzasPopulares: 0, registrarMeta: false });
+    expect(resultadoBaixo.itens.find((i) => i.produtoNome === "Pepperoni")!.sugestaoArredondada).toBe(1);
+
+    // falta de 1.1kg -> passa do mínimo, sobe pro próximo passo de 0,5kg: 1,5kg (não 2kg)
+    mockListIngredientes.mockResolvedValue([
+      { id: "i1", sabor_id: "s1", produto_id: pepperoni.id, grupo_substituicao_id: null, quantidade: 0.275, unidade: "kg" },
+    ]);
+    const resultadoAlto = await calcularSugestaoCompra({ qtdPizzasBasilico: 0, qtdPizzasPopulares: 0, registrarMeta: false });
+    expect(resultadoAlto.itens.find((i) => i.produtoNome === "Pepperoni")!.sugestaoArredondada).toBe(1.5);
+  });
+
   it("converte kg da receita pra unidade discreta de estoque (bisnaga) e arredonda pro inteiro, nunca fração", async () => {
     // produto tracked em "bisnaga" (~1,5kg cada), receita pede em kg
     const requeijao = produto({ id: "req", nome: "Requeijão Genérico", unidade: "bisnaga", estoque_atual: 0 });
     mockListProdutos.mockResolvedValue([...produtos, requeijao]);
     mockListPadroes.mockResolvedValue([
-      { id: "pr1", produto_id: requeijao.id, nome_padrao: "Bisnaga 1,5kg", unidades_por_padrao: 1, peso_ou_volume_por_unidade: 1.5, multiplo_minimo: null, ativo: true },
+      { id: "pr1", produto_id: requeijao.id, nome_padrao: "Bisnaga 1,5kg", unidades_por_padrao: 1, peso_ou_volume_por_unidade: 1.5, multiplo_minimo: null, quantidade_minima: null, ativo: true },
     ]);
     mockListSabores.mockResolvedValue([
       { id: "s1", nome: "Sabor com requeijão", tipo: "piso_seguranca", categoria: "salgada", piso_minimo_pizzas: 4, queijo_override_kg: null, ativo: true, observacoes: null },

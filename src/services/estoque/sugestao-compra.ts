@@ -191,12 +191,22 @@ function paraUnidadeDoEstoque(
 function arredondarCompra(falta: number, produtoUnidade: string, padrao: PadraoEmbalagem | null): { quantidade: number; origemPadrao?: string } {
   if (falta <= 0) return { quantidade: 0 };
 
-  const incremento = padrao?.peso_ou_volume_por_unidade && ehUnidadeContinua(produtoUnidade) ? padrao.peso_ou_volume_por_unidade : 1;
-  let unidades = Math.ceil(falta / incremento);
-  if (padrao?.multiplo_minimo && padrao.multiplo_minimo > 1) {
-    unidades = Math.ceil(unidades / padrao.multiplo_minimo) * padrao.multiplo_minimo;
+  const continua = ehUnidadeContinua(produtoUnidade);
+  const incremento = padrao?.peso_ou_volume_por_unidade && continua ? padrao.peso_ou_volume_por_unidade : 1;
+
+  // Piso de compra diferente do incremento (ex: Pepperoni — nunca compra
+  // menos de 1kg, mas depois do mínimo sobe de 0,5 em 0,5kg: 1/1,5/2kg...).
+  // Só se aplica a unidade contínua — não faz sentido "mínimo de X un".
+  const minimo = padrao?.quantidade_minima && continua ? padrao.quantidade_minima : 0;
+  if (falta <= minimo) {
+    return { quantidade: minimo, origemPadrao: padrao?.nome_padrao };
   }
-  return { quantidade: unidades * incremento, origemPadrao: padrao?.nome_padrao };
+
+  let unidadesExcedente = Math.ceil((falta - minimo) / incremento);
+  if (padrao?.multiplo_minimo && padrao.multiplo_minimo > 1) {
+    unidadesExcedente = Math.ceil(unidadesExcedente / padrao.multiplo_minimo) * padrao.multiplo_minimo;
+  }
+  return { quantidade: minimo + unidadesExcedente * incremento, origemPadrao: padrao?.nome_padrao };
 }
 
 // Monta a linha final do relatório (falta + arredondamento + valor
