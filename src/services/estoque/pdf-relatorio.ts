@@ -11,6 +11,32 @@ function brl(v: number): string {
 // paginação abaixo). Ajustar se a fonte/linha mudar de tamanho.
 const ITENS_POR_PAGINA = 22;
 
+// Página com esse tanto de itens ou menos é considerada "órfã" — melhor
+// redistribuir do que deixar 1-4 itens sozinhos numa página quase vazia.
+const LIMIAR_PAGINA_ORFA = 4;
+
+// Divide os itens em páginas, evitando deixar uma última página quase
+// vazia (ex: 23 itens com 22 por página sobraria "1 item sozinho" na
+// página 2). Quando isso aconteceria, redistribui em fatias mais parelhas
+// entre o MESMO número de páginas em vez de aumentar ITENS_POR_PAGINA
+// pra todo mundo — a página anterior "vaza" um pouco mais, mas nenhuma
+// página fica visivelmente maior que as outras.
+function distribuirEmPaginas<T>(itens: T[], itensPorPagina: number, limiarOrfao: number): T[][] {
+  if (itens.length === 0) return [[]];
+
+  const totalPaginas = Math.ceil(itens.length / itensPorPagina);
+  if (totalPaginas <= 1) return [itens];
+
+  const itensNaUltima = itens.length - (totalPaginas - 1) * itensPorPagina;
+  const tamanhoPagina = itensNaUltima <= limiarOrfao ? Math.ceil(itens.length / totalPaginas) : itensPorPagina;
+
+  const paginas: T[][] = [];
+  for (let i = 0; i < itens.length; i += tamanhoPagina) {
+    paginas.push(itens.slice(i, i + tamanhoPagina));
+  }
+  return paginas;
+}
+
 function linhaTabela(item: SugestaoCompraResultado["itens"][number]): string {
   return `
     <tr class="falta">
@@ -88,7 +114,6 @@ function estiloComumSugestao(): string {
   tr.falta td.destaque { color: #dc2626; }
   .pool { font-size: 9px; background: #e0e7ff; color: #4338ca; padding: 1px 6px; border-radius: 4px; margin-left: 4px; }
   .motivo { color: #64748b; font-size: 9px; }
-  tr.subtotal td { padding: 8px 10px; font-weight: 700; font-size: 11px; border-top: 2px solid #cbd5e1; color: #475569; }
   .pagina { page-break-after: always; }
   .pagina:last-child { page-break-after: auto; }
   .total-geral {
@@ -123,15 +148,11 @@ function gerarHtml(resultado: SugestaoCompraResultado): string {
   const comFalta = itens.filter((i) => i.falta > 0);
 
   // Paginação manual (em vez de deixar o quebra-página automático do
-  // navegador cortar a tabela no meio): cada página carrega só os itens
-  // dela, com um subtotal PRÓPRIO no rodapé da tabela — nunca o total
-  // geral repetido em todo canto. O Total Geral só aparece uma vez, no
-  // fim da última página, visualmente destacado do subtotal de página.
-  const paginas: (typeof comFalta)[] = [];
-  for (let i = 0; i < comFalta.length; i += ITENS_POR_PAGINA) {
-    paginas.push(comFalta.slice(i, i + ITENS_POR_PAGINA));
-  }
-  if (paginas.length === 0) paginas.push([]);
+  // navegador cortar a tabela no meio): cada página carrega só a tabela
+  // com os itens dela, sem subtotal próprio — o Total Geral aparece uma
+  // única vez, no fim da última página. distribuirEmPaginas evita deixar
+  // itens órfãos sozinhos numa página quase vazia.
+  const paginas = distribuirEmPaginas(comFalta, ITENS_POR_PAGINA, LIMIAR_PAGINA_ORFA);
 
   // Mesmo sendo "consulta sob demanda" (não a mensagem padrão do grupo),
   // o PDF não deve parecer pronto pra aprovar quando o custo por pizza
@@ -159,7 +180,6 @@ function gerarHtml(resultado: SugestaoCompraResultado): string {
     .map((itensPagina, idx) => {
       const isPrimeira = idx === 0;
       const isUltima = idx === paginas.length - 1;
-      const subtotalPagina = itensPagina.reduce((s, i) => s + (i.valorEstimado ?? 0), 0);
       const linhas = itensPagina.map(linhaTabela).join("");
       const corpoTabela =
         linhas || `<tr><td colspan="8" style="text-align:center;padding:24px;color:#94a3b8">✅ Estoque cobre a meta pedida — nenhuma compra necessária.</td></tr>`;
@@ -171,11 +191,6 @@ function gerarHtml(resultado: SugestaoCompraResultado): string {
           <table>
             <thead>${CABECALHO_TABELA}</thead>
             <tbody>${corpoTabela}</tbody>
-            ${
-              itensPagina.length > 0
-                ? `<tfoot><tr class="subtotal"><td colspan="6">SUBTOTAL DESTA PÁGINA (${itensPagina.length} ${itensPagina.length === 1 ? "item" : "itens"})</td><td class="num" colspan="2">R$ ${brl(subtotalPagina)}</td></tr></tfoot>`
-                : ""
-            }
           </table>
         </div>
         ${
