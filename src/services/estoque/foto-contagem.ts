@@ -160,11 +160,25 @@ Retorne SOMENTE JSON válido, sem markdown:
 }
 
 Regras:
-- Cada produto distinto na foto = um item na lista, mesmo que a foto só tenha 1 produto.
+- ⚠️ NÃO PULE NENHUM PRODUTO — antes de responder, varra a foto de novo do início ao fim (esquerda pra
+  direita, de cima a baixo) conferindo se todo item que você já listou continua lá E se não ficou nenhum
+  produto de fora. É um erro comum ignorar um produto porque ele "parece repetido" ou "parece o mesmo" de
+  outro já listado — NÃO é: dois produtos lado a lado com embalagem parecida (ex: duas garrafas PET de
+  refrigerante) quase sempre são MARCAS OU VARIANTES DIFERENTES (ex: uma garrafa com tampa vermelha —
+  Coca-Cola normal — do lado de uma com tampa preta — Coca-Cola Zero; ou duas marcas de guaraná lado a
+  lado). Leia o RÓTULO de cada unidade individualmente antes de agrupar ou descartar qualquer uma — nunca
+  assuma que é duplicata só pelo formato da embalagem.
+- Cada RÓTULO/VARIANTE distinto = um item próprio na lista, mesmo que a embalagem física (garrafa, caixa)
+  seja idêntica — normal e zero/diet/light do mesmo refrigerante são produtos DIFERENTES, nunca some as
+  duas num item só.
 - "nome": nome do produto como você identifica pelo rótulo/embalagem/aparência.
-- "quantidade": sua melhor estimativa JÁ na unidade de estoque (use a referência de embalagem acima quando o
-  produto bater). Se não conseguir estimar com nenhuma confiança pra um produto específico, quantidade=null
-  NESSE item — não invente número, mas ainda assim liste o produto se conseguiu identificar ele.
+- "quantidade": CONTE CADA UNIDADE FÍSICA INDIVIDUALMENTE, incluindo garrafas/embalagens parcialmente
+  visíveis, parcialmente sobrepostas por outra, ou cortadas na borda da foto — uma garrafa atrás de outra
+  ou só com o gargalo visível ainda é 1 unidade, não descarte. Já CONVERTIDA pra unidade de estoque que a
+  pizzaria usa (kg, un, bisnaga, barra etc — não a quantidade de caixas/pacotes; use a referência de
+  embalagem acima quando o produto bater). Se não conseguir estimar com nenhuma confiança pra um produto
+  específico, quantidade=null NESSE item — não invente número, mas ainda assim liste o produto se
+  conseguiu identificar ele.
 - "confianca" é por item: contagem por foto raramente é "alta" (itens podem estar parcialmente escondidos,
   empilhados, ou sem referência de embalagem conhecida) — use "alta" só quando a contagem é direta e sem
   ambiguidade nenhuma.

@@ -295,6 +295,7 @@ async function importarProdutosNovos(): Promise<void> {
     { nome: "Linguiça Calabresa", unidade: "kg", tipo: "bruto", categoria: "frios", observacoes: "insumo bruto (não fatiado) — input da transformação pra Linguiça Calabresa Fatiada" },
     { nome: "Massa de Pizza", unidade: "un", tipo: "manipulado", formato_saida: "unidade de 350g", observacoes: "manipulado — ver fichas_tecnicas. Distinto de 'Massa de Pizza Pronta' (comprada pronta como backup)" },
     { nome: "Queijo Triturado", unidade: "kg", tipo: "manipulado", formato_saida: "bobina de 200g", observacoes: "manipulado — ver fichas_tecnicas (5% de perda na trituração)" },
+    { nome: "Guaraná Antárctica Zero 1L", unidade: "un", tipo: "bruto", categoria: "bebidas", observacoes: "criado automaticamente via import — identificado em teste real de contagem por foto, sem preço definido ainda" },
   ];
 
   for (const p of novos) {
