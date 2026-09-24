@@ -51,6 +51,7 @@ import {
 import { findTenantByChat } from "../config/tenants.js";
 import { handleComandoEstoque } from "../services/estoque/whatsapp-comandos.js";
 import { handleFotoEstoque, handleRespostaConfirmacaoFoto } from "../services/estoque/whatsapp-fotos.js";
+import { EntradaMarcos, ehChamadaMarcos, marcosAntesDosComandos, marcosDepoisDosComandos } from "../services/marcos/marcos.js";
 
 const router = Router();
 
@@ -1934,11 +1935,35 @@ router.post("/zapi", async (req: Request, res: Response) => {
       return;
     }
 
+    // Assistente Marcos (services/marcos/marcos.ts): chamada "marcos ...",
+    // sim/não de alterações que ele preparou e encerramento têm prioridade
+    // sobre os comandos; texto que não é comando, com conversa aberta, vai
+    // pra ele depois. Falha do Marcos (ex: migration 014 ainda não rodou
+    // nesse banco) nunca pode travar o fluxo normal do grupo — só avisa se
+    // a pessoa chamou ele explicitamente.
+    const entradaMarcos = payload.text?.message
+      ? { chatId, texto: payload.text.message, remetente: payload.senderName || payload.chatName || "Alguém", lojaAtual: tenant.id }
+      : null;
+    const tentarMarcos = async (etapa: (e: EntradaMarcos) => Promise<boolean>): Promise<boolean> => {
+      if (!entradaMarcos) return false;
+      try {
+        return await etapa(entradaMarcos);
+      } catch (err) {
+        console.error("[Webhook] Erro no Marcos:", err);
+        if (!ehChamadaMarcos(entradaMarcos.texto)) return false;
+        const detalhe = err instanceof Error ? err.message : String(err);
+        await sendTextMessage(chatId, `⚠️ Marcos indisponível: ${detalhe.substring(0, 200)}`).catch(() => undefined);
+        return true;
+      }
+    };
+    if (await tentarMarcos(marcosAntesDosComandos)) return;
+
     // Verifica comandos antes de tentar extrair dados financeiros
     if (payload.text?.message) {
       try {
         const isComando = await handleComando(chatId, payload.text.message);
         if (isComando) return;
+        if (await tentarMarcos(marcosDepoisDosComandos)) return;
       } catch (err) {
         console.error("[Webhook] Erro ao processar comando:", err);
         const detalhe = err instanceof Error ? err.message : String(err);

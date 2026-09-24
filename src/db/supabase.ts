@@ -234,12 +234,24 @@ export async function getLancamentos(
   inicio: string,
   fim: string
 ): Promise<(Lancamento & { categoria_nome?: string; grupo_dre?: string })[]> {
-  // Usa .filter() em vez de .gte/.lte para compatibilidade com schema customizado
-  const { data, error } = await getClient()
-    .from("lancamentos")
-    .select("id, tipo, descricao, fornecedor, valor, data_emissao, data_vencimento, data_pagamento, categoria_id, status")
-    .filter("data_emissao", "gte", inicio)
-    .filter("data_emissao", "lte", fim);
+  // Usa .filter() em vez de .gte/.lte para compatibilidade com schema customizado.
+  // Lançamento com pertence_a preenchido foi pago por esta loja mas é de
+  // OUTRA (ex: insumo que o Mano comprou pra Basílico) — não é custo daqui,
+  // fica fora do DRE (ver migration 014).
+  const consultar = (excluirDeOutraLoja: boolean) => {
+    let q = getClient()
+      .from("lancamentos")
+      .select("id, tipo, descricao, fornecedor, valor, data_emissao, data_vencimento, data_pagamento, categoria_id, status")
+      .filter("data_emissao", "gte", inicio)
+      .filter("data_emissao", "lte", fim);
+    if (excluirDeOutraLoja) q = q.is("pertence_a", null);
+    return q;
+  };
+
+  let { data, error } = await consultar(true);
+  // Banco de loja que ainda não rodou a migration 014 (coluna não existe):
+  // cai pro comportamento antigo em vez de quebrar o DRE.
+  if (error && /pertence_a/.test(error.message)) ({ data, error } = await consultar(false));
 
   if (error) throw new Error(`Erro ao buscar lançamentos: ${error.message}`);
 
