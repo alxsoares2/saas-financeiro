@@ -23,7 +23,14 @@ import {
   encerrarConversa,
   salvarConversa,
 } from "./db.js";
-import { ContextoMarcos, FERRAMENTAS, executarAcao, executarFerramenta } from "./ferramentas.js";
+import {
+  ContextoMarcos,
+  FERRAMENTAS,
+  executarAcao,
+  executarFerramenta,
+  extratoEntreLojas,
+  notasDaMensagem,
+} from "./ferramentas.js";
 import { montarSystemPrompt } from "./prompt.js";
 
 const MODELO = "claude-opus-5-5";
@@ -87,6 +94,7 @@ export interface EntradaMarcos {
   texto: string;
   remetente: string;
   lojaAtual: string; // tenant.id
+  mensagemCitadaId?: string; // quando a mensagem é resposta a outra (ex: à foto de uma nota)
 }
 
 // Chamado ANTES do roteador de comandos. Trata o que tem prioridade sobre os
@@ -182,15 +190,33 @@ async function conversar(e: EntradaMarcos, existente: Conversa | null): Promise<
   const conversa = existente ?? (await criarConversa(e.chatId));
   const tamanhoAntes = conversa.mensagens.length;
 
-  let prefixo = "";
+  // Contexto que o sistema anexa à mensagem (o modelo não tem como saber sozinho):
+  // alterações que continuam esperando "sim" e a nota citada, se for resposta.
+  const notas: string[] = [];
   if (conversa.acoesPendentes.length) {
-    prefixo = "[sistema: as alterações que estavam aguardando confirmação foram descartadas, porque chegou mensagem nova em vez de 'sim'.]\n";
-    conversa.acoesPendentes = [];
+    notas.push(
+      `[sistema: continuam aguardando "sim" (novas alterações entram na mesma lista):\n${conversa.acoesPendentes
+        .map((a, i) => `${i + 1}. ${a.descricao}`)
+        .join("\n")}]`
+    );
   }
-  conversa.mensagens.push({ role: "user", content: [{ type: "text", text: `${prefixo}${carimbo(e.remetente)} ${e.texto.trim()}` }] });
+  if (e.mensagemCitadaId) {
+    const citadas = await notasDaMensagem(e.mensagemCitadaId).catch(() => [] as string[]);
+    notas.push(
+      citadas.length
+        ? `[sistema: esta mensagem é resposta à foto/mensagem que gerou: ${citadas.join("; ")}]`
+        : "[sistema: esta mensagem é resposta a uma mensagem que não gerou lançamento (ex: texto ou resposta do bot)]"
+    );
+  }
+  conversa.mensagens.push({
+    role: "user",
+    content: [{ type: "text", text: `${notas.map((n) => n + "\n").join("")}${carimbo(e.remetente)} ${e.texto.trim()}` }],
+  });
 
   const system = montarSystemPrompt(ctx.lojaAtual, ctx.outrasLojas);
-  const pendentes: AcaoPendente[] = [];
+  // Alterações pendentes ACUMULAM entre mensagens (só "sim"/"não" limpa a lista).
+  const pendentes: AcaoPendente[] = [...conversa.acoesPendentes];
+  const tamanhoPendentesAntes = pendentes.length;
   let custoTurno = 0;
   let textoFinal = "";
 
@@ -263,7 +289,15 @@ async function conversar(e: EntradaMarcos, existente: Conversa | null): Promise<
   }
 
   conversa.custoUsd += custoTurno;
-  conversa.acoesPendentes = pendentes;
+  // Mesma alteração preparada duas vezes (ex: pessoa repetiu o pedido) conta uma vez só.
+  const vistas = new Set<string>();
+  conversa.acoesPendentes = pendentes.filter((p) => {
+    const chave = `${p.ferramenta}:${JSON.stringify(p.entrada)}`;
+    if (vistas.has(chave)) return false;
+    vistas.add(chave);
+    return true;
+  });
+  const novasPendentes = conversa.acoesPendentes.length > tamanhoPendentesAntes;
   await salvarConversa(conversa);
   console.log(`[Marcos] turno: US$ ${custoTurno.toFixed(4)} | conversa: US$ ${conversa.custoUsd.toFixed(4)} | pendentes: ${pendentes.length}`);
 
@@ -272,12 +306,15 @@ async function conversar(e: EntradaMarcos, existente: Conversa | null): Promise<
   const texto = textoFinal.replace(/\[silencio\]/gi, "").trim();
   const partes: string[] = [];
   if (texto) partes.push(texto);
-  if (pendentes.length) {
+  // Lista de confirmação: mostra sempre que entrou alteração nova (a lista
+  // inteira, com as anteriores ainda pendentes) — é o que o "sim" vai executar.
+  if (novasPendentes) {
     partes.push(
       [
-        "📝 *Confirma?*",
-        ...pendentes.map((p, i) => `${i + 1}. ${p.descricao}`),
-        "*sim* ou *não*",
+        "📝 *Aguardando confirmação:*",
+        ...conversa.acoesPendentes.map((p, i) => `${i + 1}. ${p.descricao}`),
+        "",
+        "Responda *sim* pra confirmar ou *não* pra cancelar.",
       ].join("\n")
     );
   }
@@ -296,6 +333,24 @@ async function confirmar(e: EntradaMarcos, conversa: Conversa): Promise<void> {
       linhas.push(`❌ Falhou: ${acao.descricao.split("\n")[0]} — ${err instanceof Error ? err.message : String(err)}`);
     }
   }
+  // Mexeu na conta entre lojas → mostra o extrato atualizado na sequência,
+  // pra ficar claro o efeito do "sim".
+  const lojasAfetadas = new Set<string>();
+  for (const a of conversa.acoesPendentes) {
+    const x: any = a.entrada;
+    if (a.ferramenta === "definir_loja_dona" && x.loja) lojasAfetadas.add(x.loja);
+    if (a.ferramenta === "registrar_acerto") lojasAfetadas.add(x.loja_devedora === ctx.lojaAtual ? x.loja_credora : x.loja_devedora);
+  }
+  lojasAfetadas.delete(ctx.lojaAtual);
+  const extratos: string[] = [];
+  for (const loja of lojasAfetadas) {
+    try {
+      extratos.push((await extratoEntreLojas(ctx, loja)).extrato);
+    } catch (err) {
+      console.error("[Marcos] Erro ao montar extrato pós-confirmação:", err);
+    }
+  }
+
   conversa.acoesPendentes = [];
   // Registra no histórico pro Marcos saber o que aconteceu na próxima pergunta.
   conversa.mensagens.push({
@@ -303,7 +358,8 @@ async function confirmar(e: EntradaMarcos, conversa: Conversa): Promise<void> {
     content: [{ type: "text", text: `[sistema: ${e.remetente} confirmou. Resultado:\n${linhas.join("\n")}]` }],
   });
   await salvarConversa(conversa);
-  await enviar(e.chatId, linhas.join("\n"));
+  const falhou = linhas.some((l) => l.startsWith("❌"));
+  await enviar(e.chatId, [falhou ? "⚠️ *Feito, com falhas:*" : "✅ *Feito!*", ...linhas, ...extratos.map((x) => "\n" + x)].join("\n"));
 }
 
 async function cancelar(e: EntradaMarcos, conversa: Conversa): Promise<void> {

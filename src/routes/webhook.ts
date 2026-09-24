@@ -1942,7 +1942,13 @@ router.post("/zapi", async (req: Request, res: Response) => {
     // nesse banco) nunca pode travar o fluxo normal do grupo — só avisa se
     // a pessoa chamou ele explicitamente.
     const entradaMarcos = payload.text?.message
-      ? { chatId, texto: payload.text.message, remetente: payload.senderName || payload.chatName || "Alguém", lojaAtual: tenant.id }
+      ? {
+          chatId,
+          texto: payload.text.message,
+          remetente: payload.senderName || payload.chatName || "Alguém",
+          lojaAtual: tenant.id,
+          mensagemCitadaId: payload.referenceMessageId,
+        }
       : null;
     const tentarMarcos = async (etapa: (e: EntradaMarcos) => Promise<boolean>): Promise<boolean> => {
       if (!entradaMarcos) return false;

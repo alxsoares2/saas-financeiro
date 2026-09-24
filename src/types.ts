@@ -8,6 +8,7 @@ export interface ZAPIPayload {
   type: "ReceivedCallback";
   chatName?: string;
   senderName?: string;
+  referenceMessageId?: string; // mensagem citada (resposta) — a Z-API manda só o ID, nunca o conteúdo
   senderPhoto?: string;
   text?: {
     message: string;

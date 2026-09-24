@@ -426,34 +426,72 @@ function nomeLoja(l: string): string {
   return ({ mano: "Mano", basilico: "Basílico" } as Record<string, string>)[l] ?? l;
 }
 
-async function saldoEntreLojas(e: any, ctx: ContextoMarcos) {
-  const outra = normalizarLoja(ctx, e.outra_loja);
+// Extrato da conta corrente entre esta loja e `outra`, montado em código (o
+// modelo só repassa). Cada linha mostra o efeito no saldo "quanto a outra
+// loja deve a esta": + aumenta a dívida, − abate. Exportado pra ser mostrado
+// também logo depois de um "sim" (ver marcos.ts).
+export async function extratoEntreLojas(ctx: ContextoMarcos, outraLoja: string): Promise<{ extrato: string; saldo: number; movimentos: number }> {
+  const outra = normalizarLoja(ctx, outraLoja);
   if (outra === ctx.lojaAtual) throw new Error("Informe a OUTRA loja, não esta.");
   const acertos = await listarAcertos(ctx.lojaAtual, outra);
+  const [nOutra, nAqui] = [nomeLoja(outra), nomeLoja(ctx.lojaAtual)];
+  const titulo = `*Conta ${nOutra} × ${nAqui}*`;
 
-  // Extrato montado em código (o modelo só repassa): cada linha com o efeito
-  // no saldo "quanto a outra loja deve a esta". + aumenta, − abate.
+  if (acertos.length === 0) {
+    return {
+      extrato: [
+        titulo,
+        "Ainda não tem nada registrado entre as lojas.",
+        "",
+        "Pra lançar, é só dizer, por exemplo:",
+        `• respondendo a foto da nota: _marcos, essa é da ${nOutra}_`,
+        `• _marcos, o Fiuza pagou R$ 230 de gás pra ${nOutra}_`,
+        "• _marcos, paguei R$ 100 pro Fiuza_",
+      ].join("\n"),
+      saldo: 0,
+      movimentos: 0,
+    };
+  }
+
   let saldo = 0;
   const linhas: string[] = [];
   for (const a of acertos) {
     const efeito = (a.tipo === "divida" ? 1 : -1) * (a.loja_devedora === outra ? 1 : -1) * a.valor;
     saldo = Math.round((saldo + efeito) * 100) / 100;
-    const codigo = a.lancamento_id ? ` *${codigoCurto(a.lancamento_id)}*` : "";
-    const rotulo = a.tipo === "pagamento" ? `Pagamento ${nomeLoja(a.loja_devedora)} → ${nomeLoja(a.loja_credora)}` : curto(a.descricao, 30);
-    linhas.push(`• ${dataCurta(a.data)} ${rotulo}${codigo}  ${efeito >= 0 ? "+" : "−"}${brl(Math.abs(efeito))}`);
+    const codigo = a.lancamento_id ? ` (${codigoCurto(a.lancamento_id)})` : "";
+    const rotulo = a.tipo === "pagamento" ? `Pagamento ${nomeLoja(a.loja_devedora)} → ${nomeLoja(a.loja_credora)}` : curto(a.descricao, 32);
+    linhas.push(`• ${dataCurta(a.data)} — ${rotulo}${codigo}: ${efeito >= 0 ? "+" : "−"}R$ ${brl(Math.abs(efeito))}`);
   }
-  const titulo = `*Conta ${nomeLoja(outra)} × ${nomeLoja(ctx.lojaAtual)}*`;
   const fim =
     saldo > 0
-      ? `*${nomeLoja(outra)} deve R$ ${brl(saldo)} ao ${nomeLoja(ctx.lojaAtual)}*`
+      ? `*Saldo: ${nOutra} deve R$ ${brl(saldo)} ao ${nAqui}*`
       : saldo < 0
-        ? `*${nomeLoja(ctx.lojaAtual)} deve R$ ${brl(-saldo)} à ${nomeLoja(outra)}*`
-        : "*Saldo zerado*";
+        ? `*Saldo: ${nAqui} deve R$ ${brl(-saldo)} à ${nOutra}*`
+        : "*Saldo: zerado, ninguém deve nada*";
   return {
-    extrato: linhas.length ? [titulo, ...linhas, fim].join("\n") : `${titulo}\nNenhum lançamento entre as lojas. ${fim}`,
-    saldo_que_a_outra_loja_deve: saldo,
-    movimentos: linhas.length,
+    extrato: [titulo, `_(+ = ${nOutra} passou a dever · − = pagamento)_`, "", ...linhas, "", fim].join("\n"),
+    saldo,
+    movimentos: acertos.length,
   };
+}
+
+async function saldoEntreLojas(e: any, ctx: ContextoMarcos) {
+  const r = await extratoEntreLojas(ctx, e.outra_loja);
+  return { extrato: r.extrato, saldo_que_a_outra_loja_deve: r.saldo, movimentos: r.movimentos };
+}
+
+// Notas (lançamentos) geradas por uma mensagem do grupo — pra quando alguém
+// RESPONDE a foto de uma nota. Cada lançamento guarda o ID da mensagem que o
+// gerou (message_id; cupom com vários itens vira "<id>-0", "<id>-1"...).
+export async function notasDaMensagem(messageId: string): Promise<string[]> {
+  const id = messageId.replace(/[^A-Za-z0-9_-]/g, "");
+  if (!id) return [];
+  const { data, error } = await getClient()
+    .from("lancamentos")
+    .select("id, fornecedor, descricao, valor, data_emissao, pertence_a")
+    .or(`message_id.eq.${id},message_id.like.${id}-*`);
+  if (error) throw new Error(`Erro ao buscar notas da mensagem citada: ${error.message}`);
+  return (data ?? []).map((l: any) => `${resumoLancamento(l)}${l.pertence_a ? ` [já é compra da ${nomeLoja(l.pertence_a)}]` : ""}`);
 }
 
 // ── Preparação de alterações (valida + descreve, não executa) ────────────────
@@ -472,13 +510,13 @@ async function prepararAlteracao(nome: string, e: any, ctx: ContextoMarcos): Pro
       if (e.nova_data_vencimento) mudancas.push(`vencimento → ${dataBR(validarData(e.nova_data_vencimento, "nova_data_vencimento"))}`);
       if (e.nova_descricao) mudancas.push(`descrição → "${e.nova_descricao}"`);
       if (mudancas.length === 0) throw new Error("Nenhuma alteração informada");
-      return { ferramenta: nome, entrada: e, descricao: `${resumoLancamento(l)}: ${mudancas.join("; ")}` };
+      return { ferramenta: nome, entrada: e, descricao: `Corrigir ${resumoLancamento(l)}: ${mudancas.join("; ")}` };
     }
     case "marcar_como_pago": {
       const l = await lancamentoPorCodigo(e.codigo);
       if (l.status === "pago") throw new Error(`${codigoCurto(l.id)} já está pago`);
       const d = validarData(e.data_pagamento, "data_pagamento") ?? hojeISO();
-      return { ferramenta: nome, entrada: e, descricao: `${resumoLancamento(l)} → pago em ${dataCurta(d)}` };
+      return { ferramenta: nome, entrada: e, descricao: `Marcar ${resumoLancamento(l)} como *pago* em ${dataCurta(d)}` };
     }
     case "excluir_lancamento": {
       const l = await lancamentoPorCodigo(e.codigo);
@@ -507,8 +545,8 @@ async function prepararAlteracao(nome: string, e: any, ctx: ContextoMarcos): Pro
         ferramenta: nome,
         entrada: { ...e, loja },
         descricao: loja
-          ? `Compra da *${nomeLoja(loja)}* (sai do DRE do ${nomeLoja(ctx.lojaAtual)}, ${nomeLoja(loja)} deve +R$ ${brl(soma)}):\n   ${lista}`
-          : `Volta pro ${nomeLoja(ctx.lojaAtual)} (apaga a dívida):\n   ${lista}`,
+          ? `Marcar como compra da *${nomeLoja(loja)}*:\n   ${lista}\n   → sai do DRE do ${nomeLoja(ctx.lojaAtual)} e a ${nomeLoja(loja)} passa a dever R$ ${brl(soma)} ao ${nomeLoja(ctx.lojaAtual)}`
+          : `Voltar pra conta do ${nomeLoja(ctx.lojaAtual)} (desfaz a compra pra outra loja e apaga a dívida):\n   ${lista}`,
       };
     }
     case "registrar_acerto": {
@@ -522,8 +560,8 @@ async function prepararAlteracao(nome: string, e: any, ctx: ContextoMarcos): Pro
         entrada: { ...e, loja_devedora: devedora, loja_credora: credora },
         descricao:
           e.tipo === "divida"
-            ? `Dívida: ${nomeLoja(devedora)} deve +R$ ${brl(e.valor)} ao ${nomeLoja(credora)} — ${curto(e.descricao, 40)} (${dataCurta(d)})`
-            : `Pagamento: ${nomeLoja(devedora)} → ${nomeLoja(credora)} −R$ ${brl(e.valor)} — ${curto(e.descricao, 40)} (${dataCurta(d)})`,
+            ? `Registrar que a *${nomeLoja(devedora)}* deve R$ ${brl(e.valor)} ao *${nomeLoja(credora)}* — ${curto(e.descricao, 40)} (${dataCurta(d)})`
+            : `Registrar pagamento de R$ ${brl(e.valor)} da *${nomeLoja(devedora)}* pro *${nomeLoja(credora)}* — ${curto(e.descricao, 40)} (${dataCurta(d)}) → abate da dívida`,
       };
     }
   }
@@ -552,7 +590,7 @@ export async function executarAcao(acao: AcaoPendente, ctx: ContextoMarcos): Pro
         if (error) throw new Error(`Erro ao atualizar vencimento: ${error.message}`);
       }
       if (e.nova_descricao) await atualizarDescricao(l.id, e.nova_descricao);
-      return `✅ ${codigoCurto(l.id)} alterado`;
+      return `• ${codigoCurto(l.id)} corrigido`;
     }
     case "marcar_como_pago": {
       const l = await lancamentoPorCodigo(e.codigo);
@@ -561,13 +599,13 @@ export async function executarAcao(acao: AcaoPendente, ctx: ContextoMarcos): Pro
         .update({ status: "pago", data_pagamento: e.data_pagamento ?? hojeISO() })
         .eq("id", l.id);
       if (error) throw new Error(`Erro ao marcar pago: ${error.message}`);
-      return `✅ ${codigoCurto(l.id)} marcado como pago`;
+      return `• ${codigoCurto(l.id)} marcado como pago`;
     }
     case "excluir_lancamento": {
       const l = await lancamentoPorCodigo(e.codigo);
       await excluirAcertosDoLancamento(l.id);
       await excluirLancamento(l.id);
-      return `✅ ${codigoCurto(l.id)} excluído`;
+      return `• ${codigoCurto(l.id)} excluído`;
     }
     case "criar_lancamento": {
       const cat = await categoriaPorNome(e.categoria);
@@ -589,7 +627,7 @@ export async function executarAcao(acao: AcaoPendente, ctx: ContextoMarcos): Pro
         e.ja_pago ? "pago" : "pendente",
         e.ja_pago ? e.data_emissao : undefined
       );
-      return `✅ Lançamento criado: *${codigoCurto(l.id)}*`;
+      return `• Lançamento criado: *${codigoCurto(l.id)}*`;
     }
     case "definir_loja_dona": {
       const feitos: string[] = [];
@@ -600,7 +638,9 @@ export async function executarAcao(acao: AcaoPendente, ctx: ContextoMarcos): Pro
         if (e.loja) await criarAcertoDoLancamento(l, e.loja, ctx);
         feitos.push(codigoCurto(l.id));
       }
-      return e.loja ? `✅ ${feitos.join(", ")} marcado(s) como compra pra ${e.loja}` : `✅ ${feitos.join(", ")} voltou(aram) pra ${ctx.lojaAtual}`;
+      return e.loja
+        ? `• ${feitos.join(", ")} agora é compra da ${nomeLoja(e.loja)} (fora do DRE do ${nomeLoja(ctx.lojaAtual)})`
+        : `• ${feitos.join(", ")} voltou pra conta do ${nomeLoja(ctx.lojaAtual)}`;
     }
     case "registrar_acerto": {
       await criarAcerto({
@@ -613,7 +653,9 @@ export async function executarAcao(acao: AcaoPendente, ctx: ContextoMarcos): Pro
         lancamento_id: null,
         criado_por: ctx.remetente,
       });
-      return e.tipo === "divida" ? `✅ Dívida de R$ ${brl(e.valor)} registrada` : `✅ Pagamento de R$ ${brl(e.valor)} registrado`;
+      return e.tipo === "divida"
+        ? `• Dívida de R$ ${brl(e.valor)} registrada (${nomeLoja(e.loja_devedora)} deve ao ${nomeLoja(e.loja_credora)})`
+        : `• Pagamento de R$ ${brl(e.valor)} registrado (${nomeLoja(e.loja_devedora)} → ${nomeLoja(e.loja_credora)})`;
     }
   }
   throw new Error(`Ação desconhecida: ${acao.ferramenta}`);
