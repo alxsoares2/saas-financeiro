@@ -1,4 +1,4 @@
-import { RE_ENCERRAR, RE_NAO, RE_SIM, ehChamadaMarcos } from "../src/services/marcos/marcos";
+import { RE_ENCERRAR, RE_NAO, RE_SIM, RE_SIM_COM_RESTO, ehChamadaMarcos } from "../src/services/marcos/marcos";
 
 describe("Marcos — reconhecimento de mensagens", () => {
   test.each(["marcos quanto devo pro fiuza?", "Marcos, essa nota é da basilico", "MARCOS", "  marcos: oi"])(
@@ -22,5 +22,17 @@ describe("Marcos — reconhecimento de mensagens", () => {
   );
   test.each(["valeu, mas quanto deu o total?", "obrigado, e o mês passado?"])("não encerra quando tem pergunta: %s", (t) =>
     expect(RE_ENCERRAR.test(t)).toBe(false)
+  );
+});
+
+describe("Marcos — 'sim' com pedido junto", () => {
+  test.each([
+    ["sim ,  mas quero ve a questao de conciliacao financeira mesmo", "mas quero ve a questao de conciliacao financeira mesmo"],
+    ["sim, e quanto eu devo agora?", "e quanto eu devo agora?"],
+    ["Confirmo. Me mostra o extrato", "Me mostra o extrato"],
+  ])("%s", (t, resto) => expect(t.match(RE_SIM_COM_RESTO)?.[2]).toBe(resto));
+
+  test.each(["sim", "simples assim", "pode mudar pra 200?"])("não é 'sim com resto': %s", (t) =>
+    expect(RE_SIM_COM_RESTO.test(t)).toBe(false)
   );
 });

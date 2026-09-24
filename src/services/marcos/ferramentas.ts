@@ -241,9 +241,18 @@ async function lancamentoPorCodigo(codigo: string): Promise<any> {
   return data[0];
 }
 
+function curto(t: string | null | undefined, max: number): string {
+  const s = String(t ?? "").trim();
+  return s.length > max ? s.substring(0, max - 1).trimEnd() + "…" : s;
+}
+
+function dataCurta(iso: string | null | undefined): string {
+  return iso ? dataBR(iso).substring(0, 5) : "s/data";
+}
+
+// Ex: "*3C1347* Dj Produtos de Alim… R$ 208,60 (17/09)"
 function resumoLancamento(l: any): string {
-  const quem = l.fornecedor || l.descricao || "lançamento";
-  return `*${codigoCurto(l.id)}* (${String(quem).substring(0, 40)}, R$ ${brl(Number(l.valor))}, ${dataBR(l.data_emissao)})`;
+  return `*${codigoCurto(l.id)}* ${curto(l.fornecedor || l.descricao || "lançamento", 28)} R$ ${brl(Number(l.valor))} (${dataCurta(l.data_emissao)})`;
 }
 
 // Categoria pelo nome: exato (sem diferenciar maiúscula) primeiro; se não
@@ -413,35 +422,37 @@ async function listarCategorias() {
   return { categorias: data ?? [] };
 }
 
+function nomeLoja(l: string): string {
+  return ({ mano: "Mano", basilico: "Basílico" } as Record<string, string>)[l] ?? l;
+}
+
 async function saldoEntreLojas(e: any, ctx: ContextoMarcos) {
   const outra = normalizarLoja(ctx, e.outra_loja);
   if (outra === ctx.lojaAtual) throw new Error("Informe a OUTRA loja, não esta.");
   const acertos = await listarAcertos(ctx.lojaAtual, outra);
-  // Positivo = a outra loja deve pra esta.
+
+  // Extrato montado em código (o modelo só repassa): cada linha com o efeito
+  // no saldo "quanto a outra loja deve a esta". + aumenta, − abate.
   let saldo = 0;
+  const linhas: string[] = [];
   for (const a of acertos) {
-    const sinal = a.loja_devedora === outra ? 1 : -1;
-    saldo += (a.tipo === "divida" ? 1 : -1) * sinal * a.valor;
+    const efeito = (a.tipo === "divida" ? 1 : -1) * (a.loja_devedora === outra ? 1 : -1) * a.valor;
+    saldo = Math.round((saldo + efeito) * 100) / 100;
+    const codigo = a.lancamento_id ? ` *${codigoCurto(a.lancamento_id)}*` : "";
+    const rotulo = a.tipo === "pagamento" ? `Pagamento ${nomeLoja(a.loja_devedora)} → ${nomeLoja(a.loja_credora)}` : curto(a.descricao, 30);
+    linhas.push(`• ${dataCurta(a.data)} ${rotulo}${codigo}  ${efeito >= 0 ? "+" : "−"}${brl(Math.abs(efeito))}`);
   }
-  saldo = Math.round(saldo * 100) / 100;
+  const titulo = `*Conta ${nomeLoja(outra)} × ${nomeLoja(ctx.lojaAtual)}*`;
+  const fim =
+    saldo > 0
+      ? `*${nomeLoja(outra)} deve R$ ${brl(saldo)} ao ${nomeLoja(ctx.lojaAtual)}*`
+      : saldo < 0
+        ? `*${nomeLoja(ctx.lojaAtual)} deve R$ ${brl(-saldo)} à ${nomeLoja(outra)}*`
+        : "*Saldo zerado*";
   return {
-    resumo:
-      saldo > 0
-        ? `${outra} deve R$ ${brl(saldo)} para ${ctx.lojaAtual}`
-        : saldo < 0
-          ? `${ctx.lojaAtual} deve R$ ${brl(-saldo)} para ${outra}`
-          : "Contas zeradas entre as duas lojas",
-    saldo_a_receber_desta_loja: saldo,
-    movimentos: acertos.map((a) => ({
-      tipo: a.tipo,
-      devedora: a.loja_devedora,
-      credora: a.loja_credora,
-      valor: a.valor,
-      descricao: a.descricao,
-      data: a.data,
-      codigo_lancamento: a.lancamento_id ? codigoCurto(a.lancamento_id) : null,
-      registrado_por: a.criado_por,
-    })),
+    extrato: linhas.length ? [titulo, ...linhas, fim].join("\n") : `${titulo}\nNenhum lançamento entre as lojas. ${fim}`,
+    saldo_que_a_outra_loja_deve: saldo,
+    movimentos: linhas.length,
   };
 }
 
@@ -461,13 +472,13 @@ async function prepararAlteracao(nome: string, e: any, ctx: ContextoMarcos): Pro
       if (e.nova_data_vencimento) mudancas.push(`vencimento → ${dataBR(validarData(e.nova_data_vencimento, "nova_data_vencimento"))}`);
       if (e.nova_descricao) mudancas.push(`descrição → "${e.nova_descricao}"`);
       if (mudancas.length === 0) throw new Error("Nenhuma alteração informada");
-      return { ferramenta: nome, entrada: e, descricao: `Alterar ${resumoLancamento(l)}: ${mudancas.join("; ")}` };
+      return { ferramenta: nome, entrada: e, descricao: `${resumoLancamento(l)}: ${mudancas.join("; ")}` };
     }
     case "marcar_como_pago": {
       const l = await lancamentoPorCodigo(e.codigo);
       if (l.status === "pago") throw new Error(`${codigoCurto(l.id)} já está pago`);
       const d = validarData(e.data_pagamento, "data_pagamento") ?? hojeISO();
-      return { ferramenta: nome, entrada: e, descricao: `Marcar ${resumoLancamento(l)} como pago em ${dataBR(d)}` };
+      return { ferramenta: nome, entrada: e, descricao: `${resumoLancamento(l)} → pago em ${dataCurta(d)}` };
     }
     case "excluir_lancamento": {
       const l = await lancamentoPorCodigo(e.codigo);
@@ -496,8 +507,8 @@ async function prepararAlteracao(nome: string, e: any, ctx: ContextoMarcos): Pro
         ferramenta: nome,
         entrada: { ...e, loja },
         descricao: loja
-          ? `Marcar como compra pra *${loja}* (sai do DRE de ${ctx.lojaAtual}; ${loja} passa a dever R$ ${brl(soma)} a ${ctx.lojaAtual}):\n   ${lista}`
-          : `Desfazer "comprado pra outra loja" (volta pro DRE de ${ctx.lojaAtual} e apaga a dívida):\n   ${lista}`,
+          ? `Compra da *${nomeLoja(loja)}* (sai do DRE do ${nomeLoja(ctx.lojaAtual)}, ${nomeLoja(loja)} deve +R$ ${brl(soma)}):\n   ${lista}`
+          : `Volta pro ${nomeLoja(ctx.lojaAtual)} (apaga a dívida):\n   ${lista}`,
       };
     }
     case "registrar_acerto": {
@@ -511,8 +522,8 @@ async function prepararAlteracao(nome: string, e: any, ctx: ContextoMarcos): Pro
         entrada: { ...e, loja_devedora: devedora, loja_credora: credora },
         descricao:
           e.tipo === "divida"
-            ? `Registrar dívida: *${devedora}* deve R$ ${brl(e.valor)} a *${credora}* — "${e.descricao}" (${dataBR(d)})`
-            : `Registrar pagamento: *${devedora}* pagou R$ ${brl(e.valor)} a *${credora}* — "${e.descricao}" (${dataBR(d)})`,
+            ? `Dívida: ${nomeLoja(devedora)} deve +R$ ${brl(e.valor)} ao ${nomeLoja(credora)} — ${curto(e.descricao, 40)} (${dataCurta(d)})`
+            : `Pagamento: ${nomeLoja(devedora)} → ${nomeLoja(credora)} −R$ ${brl(e.valor)} — ${curto(e.descricao, 40)} (${dataCurta(d)})`,
       };
     }
   }

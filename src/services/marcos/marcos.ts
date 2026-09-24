@@ -60,6 +60,9 @@ export function ehChamadaMarcos(texto: string): boolean {
 }
 
 export const RE_SIM = /^\s*(sim|s|confirmo|confirma|confirmado|pode|pode sim|ok|isso)\s*[.!]*\s*$/i;
+// "sim, mas quero ver X" → executa as pendentes e manda o resto pro Marcos.
+// Só "sim/confirmo/confirma" (não "pode"/"ok", que costumam iniciar outro pedido).
+export const RE_SIM_COM_RESTO = /^\s*(sim|confirmo|confirma)\s*[,.;:!-]?\s+(\S[\s\S]*)$/i;
 export const RE_NAO = /^\s*(n[aã]o|cancela|cancelar|deixa|esquece)\s*[.!]*\s*$/i;
 export const RE_ENCERRAR = /^\s*(valeu|obrigad[oa]|brigad[oa]|tchau|falou|era isso|s[oó] isso|pode parar|encerrar?)\b[^?]{0,30}$/i;
 
@@ -102,13 +105,19 @@ export function marcosAntesDosComandos(e: EntradaMarcos): Promise<boolean> {
       await confirmar(e, conversa);
       return true;
     }
+    const simComResto = conversa.acoesPendentes.length ? e.texto.match(RE_SIM_COM_RESTO) : null;
+    if (simComResto) {
+      await confirmar(e, conversa);
+      await conversar({ ...e, texto: simComResto[2] }, conversa);
+      return true;
+    }
     if (conversa.acoesPendentes.length && RE_NAO.test(e.texto)) {
       await cancelar(e, conversa);
       return true;
     }
     if (RE_ENCERRAR.test(e.texto)) {
       await encerrarConversa(conversa.id);
-      await enviar(e.chatId, "👍 Qualquer coisa é só chamar: *marcos* ...");
+      await enviar(e.chatId, "👍");
       return true;
     }
     return false;
@@ -258,16 +267,17 @@ async function conversar(e: EntradaMarcos, existente: Conversa | null): Promise<
   await salvarConversa(conversa);
   console.log(`[Marcos] turno: US$ ${custoTurno.toFixed(4)} | conversa: US$ ${conversa.custoUsd.toFixed(4)} | pendentes: ${pendentes.length}`);
 
-  const silencio = textoFinal === "[silencio]" || textoFinal === "";
+  // "[silencio]" = o modelo decidiu não falar (conversa entre as pessoas, ou
+  // alteração que a lista de confirmação já explica sozinha).
+  const texto = textoFinal.replace(/\[silencio\]/gi, "").trim();
   const partes: string[] = [];
-  if (!silencio) partes.push(textoFinal);
+  if (texto) partes.push(texto);
   if (pendentes.length) {
     partes.push(
       [
-        "📝 *Pra confirmar:*",
+        "📝 *Confirma?*",
         ...pendentes.map((p, i) => `${i + 1}. ${p.descricao}`),
-        "",
-        "Responda *sim* pra executar ou *não* pra cancelar.",
+        "*sim* ou *não*",
       ].join("\n")
     );
   }
