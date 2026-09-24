@@ -32,6 +32,8 @@ import {
   notasDaMensagem,
 } from "./ferramentas.js";
 import { montarSystemPrompt } from "./prompt.js";
+import { BlocoImagem, imagemDaMensagem } from "./midia.js";
+import { transcreverAudio } from "../transcricao.js";
 
 const MODELO = "claude-opus-5-5";
 // Esforço de raciocínio: "low" deixa mais barato e rápido; "medium" (padrão
@@ -95,6 +97,8 @@ export interface EntradaMarcos {
   remetente: string;
   lojaAtual: string; // tenant.id
   mensagemCitadaId?: string; // quando a mensagem é resposta a outra (ex: à foto de uma nota)
+  fotoEnviadaId?: string; // messageId de uma foto mandada agora (legenda = texto)
+  origem?: "texto" | "audio" | "foto";
 }
 
 // Chamado ANTES do roteador de comandos. Trata o que tem prioridade sobre os
@@ -141,6 +145,56 @@ export function marcosDepoisDosComandos(e: EntradaMarcos): Promise<boolean> {
     await conversar(e, conversa);
     return true;
   });
+}
+
+// Foto mandada agora (legenda "marcos, ..." ou com conversa aberta). Roda
+// DEPOIS da leitura automática já ter registrado a nota — o Marcos recebe os
+// códigos gerados. Devolve true se passou pro Marcos.
+export function marcosAposFoto(e: EntradaMarcos & { fotoEnviadaId: string }): Promise<boolean> {
+  return naFila(e.chatId, async () => {
+    const conversa = await buscarConversaAtiva(e.chatId);
+    if (!conversa && !ehChamadaMarcos(e.texto)) return false;
+    await conversar({ ...e, origem: "foto" }, conversa);
+    return true;
+  });
+}
+
+// Áudio: transcreve e trata como texto. Só vai pro Marcos se começar com
+// "Marcos" ou se a conversa com ele estiver aberta — senão é ignorado (como
+// sempre foi). Devolve true se passou pro Marcos.
+export async function marcosAudio(e: Omit<EntradaMarcos, "texto">, audio: Buffer, mimeType?: string): Promise<boolean> {
+  const conversa = await buscarConversaAtiva(e.chatId);
+  let texto = await transcreverAudio(audio, mimeType);
+  // Transcrição às vezes escreve "Marco" ou "Ô Marcos" — normaliza pro gatilho.
+  texto = texto.replace(/^\s*(?:ô|oi|oh|e aí|ei)?[\s,]*marcos?\b[\s,.!:-]*/i, (m) => (m.trim() ? "Marcos, " : m));
+  if (!texto || (!conversa && !ehChamadaMarcos(texto))) return false;
+  const entrada: EntradaMarcos = { ...e, texto, origem: "audio" };
+  return (await marcosAntesDosComandos(entrada)) || (await marcosDepoisDosComandos(entrada));
+}
+
+// O que o Marcos precisa saber de uma foto (mandada agora ou citada numa
+// resposta): as notas que ela gerou; se não gerou nenhuma, a própria imagem
+// pra ele ler; se nem a imagem está salva, avisa isso.
+async function contextoDaFoto(messageId: string, modo: "enviada" | "citada"): Promise<{ nota: string; imagem?: BlocoImagem }> {
+  const oQue = modo === "enviada" ? "Esta foto foi mandada agora e" : "Esta mensagem responde a uma foto/mensagem que";
+  const notas = await notasDaMensagem(messageId).catch(() => [] as string[]);
+  if (notas.length) return { nota: `[sistema: ${oQue} virou lançamento(s): ${notas.join("; ")}]` };
+  const imagem = await imagemDaMensagem(messageId).catch((err) => {
+    console.error("[Marcos] Erro ao buscar foto salva:", err);
+    return null;
+  });
+  if (imagem) {
+    return {
+      nota: `[sistema: ${oQue} NÃO virou lançamento (a leitura automática falhou ou está esperando confirmação). A imagem vai anexada: leia você.]`,
+      imagem,
+    };
+  }
+  return {
+    nota:
+      modo === "enviada"
+        ? "[sistema: Esta foto foi mandada agora, mas não virou lançamento e não foi salva.]"
+        : "[sistema: Esta mensagem responde a algo que não está no sistema (foto de antes do sistema, texto, ou resposta do bot). Se for foto de nota, peça pra reenviar a foto no grupo com a legenda 'marcos, ...'.]",
+  };
 }
 
 // ── Conversa ─────────────────────────────────────────────────────────────────
@@ -200,17 +254,21 @@ async function conversar(e: EntradaMarcos, existente: Conversa | null): Promise<
         .join("\n")}]`
     );
   }
-  if (e.mensagemCitadaId) {
-    const citadas = await notasDaMensagem(e.mensagemCitadaId).catch(() => [] as string[]);
-    notas.push(
-      citadas.length
-        ? `[sistema: esta mensagem é resposta à foto/mensagem que gerou: ${citadas.join("; ")}]`
-        : "[sistema: esta mensagem é resposta a uma mensagem que não gerou lançamento (ex: texto ou resposta do bot)]"
-    );
+  const imagens: BlocoImagem[] = [];
+  if (e.fotoEnviadaId) {
+    const c = await contextoDaFoto(e.fotoEnviadaId, "enviada");
+    notas.push(c.nota);
+    if (c.imagem) imagens.push(c.imagem);
   }
+  if (e.mensagemCitadaId) {
+    const c = await contextoDaFoto(e.mensagemCitadaId, "citada");
+    notas.push(c.nota);
+    if (c.imagem) imagens.push(c.imagem);
+  }
+  const fala = e.origem === "audio" ? `(áudio transcrito) ${e.texto.trim()}` : e.texto.trim() || "(sem texto)";
   conversa.mensagens.push({
     role: "user",
-    content: [{ type: "text", text: `${notas.map((n) => n + "\n").join("")}${carimbo(e.remetente)} ${e.texto.trim()}` }],
+    content: [...imagens, { type: "text", text: `${notas.map((n) => n + "\n").join("")}${carimbo(e.remetente)} ${fala}` }],
   });
 
   const system = montarSystemPrompt(ctx.lojaAtual, ctx.outrasLojas);
@@ -318,6 +376,8 @@ async function conversar(e: EntradaMarcos, existente: Conversa | null): Promise<
       ].join("\n")
     );
   }
+  // Áudio: mostra o que foi entendido, pra pessoa conferir nomes/valores.
+  if (partes.length && e.origem === "audio") partes.unshift(`🎤 _"${e.texto.trim().substring(0, 200)}"_`);
   if (partes.length) await enviar(e.chatId, partes.join("\n\n"));
 }
 

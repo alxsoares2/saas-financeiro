@@ -19,6 +19,13 @@ export interface ZAPIPayload {
     caption?: string;
     mimeType: string;
   };
+  audio?: {
+    audioUrl?: string; // formato padrão Z-API
+    url?: string;
+    mimeType?: string;
+    seconds?: number;
+    ptt?: boolean; // true = gravado na hora (mensagem de voz)
+  };
   document?: {
     url?: string;
     documentUrl?: string; // formato padrão Z-API

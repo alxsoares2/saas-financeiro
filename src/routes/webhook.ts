@@ -51,7 +51,15 @@ import {
 import { findTenantByChat } from "../config/tenants.js";
 import { handleComandoEstoque } from "../services/estoque/whatsapp-comandos.js";
 import { handleFotoEstoque, handleRespostaConfirmacaoFoto } from "../services/estoque/whatsapp-fotos.js";
-import { EntradaMarcos, ehChamadaMarcos, marcosAntesDosComandos, marcosDepoisDosComandos } from "../services/marcos/marcos.js";
+import {
+  EntradaMarcos,
+  ehChamadaMarcos,
+  marcosAntesDosComandos,
+  marcosAposFoto,
+  marcosAudio,
+  marcosDepoisDosComandos,
+} from "../services/marcos/marcos.js";
+import { MAX_SEGUNDOS_AUDIO } from "../services/transcricao.js";
 
 const router = Router();
 
@@ -1873,6 +1881,8 @@ router.post("/zapi", async (req: Request, res: Response) => {
       imageKeys: payload.image ? Object.keys(payload.image) : null,
       imageUrl: (payload.image as any)?.imageUrl ?? payload.image?.url ?? null,
       documentUrl: (payload.document as any)?.documentUrl ?? payload.document?.url ?? null,
+      audio: payload.audio ? { seconds: payload.audio.seconds, mimeType: payload.audio.mimeType } : null,
+      referenceMessageId: payload.referenceMessageId ?? null,
       GRUPO_FINANCEIRO_ID: process.env.GRUPO_FINANCEIRO_ID,
     }));
 
@@ -1935,6 +1945,27 @@ router.post("/zapi", async (req: Request, res: Response) => {
       return;
     }
 
+    const remetente = payload.senderName || payload.chatName || "Alguém";
+
+    // Áudio (mensagem de voz): só existe pro Marcos — é transcrito e vai pra
+    // ele se começar com "Marcos" ou se a conversa com ele estiver aberta.
+    // Fora disso é ignorado, como sempre foi. Falha aqui nunca afeta o resto.
+    const audioUrl = payload.audio?.audioUrl ?? payload.audio?.url;
+    if (audioUrl) {
+      if ((payload.audio?.seconds ?? 0) > MAX_SEGUNDOS_AUDIO) return;
+      try {
+        const buffer = await downloadMedia(audioUrl);
+        await marcosAudio(
+          { chatId, remetente, lojaAtual: tenant.id, mensagemCitadaId: payload.referenceMessageId },
+          buffer,
+          payload.audio?.mimeType
+        );
+      } catch (err) {
+        console.error("[Webhook] Erro ao processar áudio pro Marcos:", err);
+      }
+      return;
+    }
+
     // Assistente Marcos (services/marcos/marcos.ts): chamada "marcos ...",
     // sim/não de alterações que ele preparou e encerramento têm prioridade
     // sobre os comandos; texto que não é comando, com conversa aberta, vai
@@ -1945,7 +1976,7 @@ router.post("/zapi", async (req: Request, res: Response) => {
       ? {
           chatId,
           texto: payload.text.message,
-          remetente: payload.senderName || payload.chatName || "Alguém",
+          remetente,
           lojaAtual: tenant.id,
           mensagemCitadaId: payload.referenceMessageId,
         }
@@ -2119,6 +2150,19 @@ router.post("/zapi", async (req: Request, res: Response) => {
       await sendTextMessage(chatId, `❌ Não consegui processar o documento: ${detalhe}`).catch((e) =>
         console.error("[Webhook] Falha ao notificar erro de documento:", e)
       );
+    } finally {
+      // Foto com legenda "marcos, ..." (ou mandada com a conversa aberta): depois
+      // da nota registrada, o Marcos recebe os códigos gerados e trata a legenda
+      // (ex: "marcos, essa é da Basílico"). Roda depois dos returns acima.
+      if (payload.image) {
+        await marcosAposFoto({
+          chatId,
+          texto: payload.image.caption ?? "",
+          remetente,
+          lojaAtual: tenant.id,
+          fotoEnviadaId: messageId,
+        }).catch((err) => console.error("[Webhook] Erro ao passar foto pro Marcos:", err));
+      }
     }
   } catch (err) {
     console.error("[Webhook] Erro não tratado:", err);
