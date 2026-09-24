@@ -26,6 +26,16 @@ function getClient(): OpenAI {
   return _client;
 }
 
+// Modelos da OpenAI (trocados em set/2026: gpt-4o → gpt-6-sol, gpt-4o-mini →
+// gpt-6-luna — mais novos e mais baratos; comparação em
+// scripts/comparar-modelos.ts). Os GPT-6 raciocinam por padrão, o que é
+// cobrado como token de saída e deixa a resposta mais lenta — todas as
+// chamadas mandam reasoning_effort "none" pra manter o comportamento de
+// chamada direta que o gpt-4o tinha. Pelo mesmo motivo usam
+// max_completion_tokens (os GPT-6 não aceitam max_tokens).
+const MODELO_VISAO = "gpt-6-sol";
+const MODELO_RAPIDO = "gpt-6-luna";
+
 const EXTRACTION_SYSTEM = `Você é um assistente especializado em extração de dados financeiros para restaurantes brasileiros.
 Analise o documento fornecido e retorne SOMENTE um JSON válido, sem markdown, sem explicações.
 
@@ -98,8 +108,9 @@ function parseExtraction(raw: string): ExtractedDocument | null {
 
 async function callHaiku(messages: any[]): Promise<string> {
   const response = await getClient().chat.completions.create({
-    model: "gpt-4o-mini",
-    max_tokens: 1024,
+    model: MODELO_RAPIDO,
+    reasoning_effort: "none",
+    max_completion_tokens: 1024,
     messages: [
       { role: "system", content: EXTRACTION_SYSTEM },
       ...messages,
@@ -234,7 +245,34 @@ EXEMPLOS DE MAPEAMENTO (estude bem):
   • "CEMIG", "Neon", "Light", "conta de luz", "energia" → "Conta de Luz" (UTILIDADES)
   • "queijo", "manteiga", "leite" → "Latícinios" (CMV)
   • "carne", "boi", "alcatra" → "Bovinos" (CMV)
-  • "frango", "peito", "coxa" → "Aves" (CMV)`;
+  • "frango", "peito", "coxa" → "Aves" (CMV)
+
+⛔ ABREVIAÇÕES DE CUPOM FISCAL — cupom/NFC-e corta os nomes pra caber na bobina.
+Expanda a abreviação ANTES de escolher a categoria. Um item abreviado que você não
+reconheceu é quase sempre INSUMO (CMV), não despesa administrativa:
+  • "QJ", "QJO", "QUEIJ", "MUSS", "MUÇ", "MUSSAR" → queijo → "Latícinios"
+    (inclui os tipos: "QJ AZUL" = gorgonzola, "QJ PRATO", "QJ COALHO", "QJ PARM" = parmesão)
+  • "REQ" → requeijão · "MANT", "MTG" → manteiga · "CREM LEITE" → creme de leite → "Latícinios"
+  • "PRES", "PRESUNT", "APRES" → presunto · "MORT" → mortadela · "BAC" → bacon → "Latícinios"
+  • "REFRI", "REFRIG" → refrigerante · "SUC" → suco → "Bebidas Não alcoólicas"
+  • "CERV" → cerveja → "Cervejas" · "VIN" → vinho → "Vinhos"
+  • "OL", "OLE" → óleo → "Óleos/Azeites/Gordura" · "AZT" → azeite → "Óleos/Azeites/Gordura"
+  • "FAR", "FARIN" → farinha · "ACUC", "AÇUC" → açúcar · "ARR" → arroz · "FJ", "FEIJ" → feijão → "Grãos/Cereais/Farinha"
+  • "TOM" → tomate · "CEB" → cebola · "BAT" → batata · "ALH" → alho → "Frutas, legumes e verduras FLV"
+  • "BOV" → bovino → "Bovinos" · "SUIN" → suíno → "Suínos" · "FGO", "FRG" → frango → "Aves"
+  • "CAM" → camarão → "Frutos do Mar" · "CONG" → congelado → "Congelados"
+  • "SAB", "SABAO" → sabão · "DET", "DETERG" → detergente · "AGUA SANIT" → água sanitária
+    · "PAP HIG" → papel higiênico → "Material de limpeza e higiene"
+  • "MOLH" → molho · "TEMP" → tempero · "COND" → condimento → "Condimentos/Temperos/Molhos"
+  • Sufixos que NÃO são o produto (ignore ao classificar): "FAT" = fatiado, "PC"/"PCT" = pacote,
+    "CX" = caixa, "UN" = unidade, "LT" = lata OU litro, "KG", "EMB ECON" = embalagem econômica,
+    "GD" = grande, "PP" = pequeno, e marcas ("MINAS CRUZ", "PERDIGAO", "ELEGE", "DRAGAO")
+
+⚠️ SE MESMO ASSIM NÃO IDENTIFICAR O PRODUTO: escolha a categoria de CMV mais plausível pelo
+contexto da nota (supermercado/distribuidora de alimentos → insumo) e marque
+"confianca": "baixa". NUNCA use "Outras despesas administrativas" como saída fácil pra um
+item de supermercado que você não decifrou — essa categoria é só pra despesa administrativa
+de verdade (material de escritório, taxa, serviço), nunca pra produto de alimentação.`;
 
 // Regra dos 5 produtos rastreados individualmente (reaproveitada nos dois
 // prompts que precisam categorizar produto por produto).
@@ -358,8 +396,9 @@ function parseMulti(raw: string): ExtracaoMultipla | null {
 
 async function callHaikuMulti(messages: any[]): Promise<string> {
   const response = await getClient().chat.completions.create({
-    model: "gpt-4o-mini",
-    max_tokens: 2048,
+    model: MODELO_RAPIDO,
+    reasoning_effort: "none",
+    max_completion_tokens: 2048,
     messages: [
       { role: "system", content: EXTRACTION_MULTI_SYSTEM },
       ...messages,
@@ -370,11 +409,12 @@ async function callHaikuMulti(messages: any[]): Promise<string> {
   return typeof textContent === "string" ? textContent : "";
 }
 
-// GPT-4o Mini para imagens
+// Modelo rápido (MODELO_RAPIDO) para imagens — fallback do pipeline em 2 etapas
 async function callSonnetMulti(messages: any[]): Promise<string> {
   const response = await getClient().chat.completions.create({
-    model: "gpt-4o-mini",
-    max_tokens: 2048,
+    model: MODELO_RAPIDO,
+    reasoning_effort: "none",
+    max_completion_tokens: 2048,
     messages: [
       { role: "system", content: EXTRACTION_MULTI_SYSTEM },
       ...messages,
@@ -419,7 +459,7 @@ export async function extractMultiFromImage(
 // acertar leitura (etapa 1) e categoria (etapa 2), separadamente, e a soma
 // nunca mais erra porque deixa de ser trabalho da IA.
 
-interface LinhaCupom {
+export interface LinhaCupom {
   descricao: string;
   quantidade: number | null;
   unidade: string | null;
@@ -427,7 +467,7 @@ interface LinhaCupom {
   desconto: number; // valor a subtrair (0 se não teve desconto nessa linha)
 }
 
-interface TranscricaoCupom {
+export interface TranscricaoCupom {
   skip?: boolean;
   tipo_documento: string;
   fornecedor: string | null;
@@ -438,7 +478,7 @@ interface TranscricaoCupom {
   linhas: LinhaCupom[];
 }
 
-const TRANSCRICAO_SYSTEM = `Você transcreve documentos financeiros brasileiros (cupons fiscais, notas, recibos)
+export const TRANSCRICAO_SYSTEM = `Você transcreve documentos financeiros brasileiros (cupons fiscais, notas, recibos)
 LINHA POR LINHA. Sua única tarefa é ler os números certos — NÃO categorize, NÃO agrupe, NÃO
 decida receita/despesa. Isso é feito depois, por outra pessoa, com o texto que você transcrever.
 
@@ -498,7 +538,7 @@ Regras:
 - Depois de transcrever tudo, confira: a soma de (valor_item - desconto) de todas as linhas
   deveria bater com "valor_total_documento". Se não bater, revise as linhas antes de responder.`;
 
-function parseTranscricao(raw: string): TranscricaoCupom | null {
+export function parseTranscricao(raw: string): TranscricaoCupom | null {
   try {
     const cleaned = raw.trim().replace(/^```json\s*/i, "").replace(/```$/i, "");
     const parsed = JSON.parse(cleaned);
@@ -524,13 +564,14 @@ async function transcreverCupom(
     ? `O usuário identificou este documento como: "${caption}". Isso pode ajudar a entender o contexto, mas sua tarefa aqui é só transcrever os números — não categorize.`
     : "Transcreva todas as linhas de produto deste documento.";
   const response = await getClient().chat.completions.create({
-    // gpt-4o (não o -mini) + detail "high" — cupons fiscais têm texto miúdo
+    // Modelo de visão (não o rápido) + detail "high" — cupons fiscais têm texto miúdo
     // e denso (16+ linhas com 3 números cada); o modelo mini + resolução
     // automática (que costuma cair pra baixa) estava perdendo/confundindo
     // números nas linhas de baixo da nota. Custa mais por imagem, mas é
     // exatamente a troca de precisão por custo que foi pedida.
-    model: "gpt-4o",
-    max_tokens: 2048,
+    model: MODELO_VISAO,
+    reasoning_effort: "none",
+    max_completion_tokens: 2048,
     messages: [
       { role: "system", content: TRANSCRICAO_SYSTEM },
       {
@@ -549,14 +590,14 @@ async function transcreverCupom(
 
 // ── Etapa 2: classificação (texto puro, sem imagem, sem conta nenhuma) ────────
 
-interface ClassificacaoProduto {
+export interface ClassificacaoProduto {
   indice: number; // índice na lista enviada, pra casar de volta com a linha certa
   tipo_lancamento: "receita" | "despesa";
   categoria_sugerida: string;
   subcategoria: string | null;
 }
 
-const CLASSIFICACAO_SYSTEM = `Você classifica produtos de documentos financeiros de restaurantes brasileiros em
+export const CLASSIFICACAO_SYSTEM = `Você classifica produtos de documentos financeiros de restaurantes brasileiros em
 categorias contábeis. Os valores já estão corretos e prontos — sua única tarefa é escolher a
 categoria de cada produto. NÃO faça nenhuma conta.
 
@@ -589,7 +630,7 @@ const SUBCATEGORIAS_VALIDAS = new Set([
   "Óleo",
 ]);
 
-function parseClassificacao(raw: string): ClassificacaoProduto[] | null {
+export function parseClassificacao(raw: string): ClassificacaoProduto[] | null {
   try {
     const cleaned = raw.trim().replace(/^```json\s*/i, "").replace(/```$/i, "");
     const parsed = JSON.parse(cleaned);
@@ -613,8 +654,9 @@ Produtos a classificar (um por linha, "índice: descrição"):
 ${produtos}`;
 
   const response = await getClient().chat.completions.create({
-    model: "gpt-4o-mini",
-    max_tokens: 2048,
+    model: MODELO_RAPIDO,
+    reasoning_effort: "none",
+    max_completion_tokens: 2048,
     messages: [
       { role: "system", content: CLASSIFICACAO_SYSTEM },
       { role: "user", content: prompt },
@@ -790,8 +832,9 @@ Analise:
 4. 2-3 ações práticas que o dono pode tomar agora`;
 
   const response = await getClient().chat.completions.create({
-    model: "gpt-4o-mini",
-    max_tokens: 1024,
+    model: MODELO_RAPIDO,
+    reasoning_effort: "none",
+    max_completion_tokens: 1024,
     messages: [
       { role: "system", content: ANALISE_SYSTEM },
       { role: "user", content: prompt },

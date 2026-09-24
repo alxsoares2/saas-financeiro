@@ -195,6 +195,19 @@ function listarProdutos(descricao: string): { multiplos: boolean; texto: string 
 
 // ── Confirmação de extração com dúvida ───────────────────────────────────────
 
+// Data de hoje no fuso de São Paulo. Importante não usar
+// `new Date().toISOString()` aqui: aquilo devolve UTC, e depois das 21h (BRT)
+// já virou o dia seguinte — a nota entraria no DRE com data de amanhã, às
+// vezes até em outro mês/competência.
+function hojeISO(): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
+
 function precisaConfirmacao(multipla: ExtracaoMultipla): string | null {
   const soma = multipla.itens.reduce((s, i) => s + i.valor, 0);
   const totalDoc = multipla.valor_total_documento;
@@ -243,7 +256,8 @@ async function registrarMultipla(
   chatId: string,
   multipla: ExtracaoMultipla,
   urlArquivo: string | undefined,
-  messageId: string
+  messageId: string,
+  dataAssumida = false
 ): Promise<void> {
   const fornecedor = multipla.fornecedor ?? "Documento";
   const somaItens = multipla.itens.reduce((s, i) => s + i.valor, 0);
@@ -372,8 +386,15 @@ async function registrarMultipla(
     linhasItens,
     temSemCategoria ? "\n🏷️ Itens marcados foram classificados no automático (provisório) — confira e ajuste se precisar." : null,
     temBaixaConfianca ? "\n⚠️ Itens com ⚠️ têm confiança baixa — confira os valores." : null,
-    multipla.data_emissao ? `📅 Emissão: ${formatarData(multipla.data_emissao)}` : null,
+    multipla.data_emissao
+      ? `📅 Emissão: ${formatarData(multipla.data_emissao)}${dataAssumida ? " _(data de hoje — não veio no documento)_" : ""}`
+      : null,
     multipla.data_vencimento ? `⏰ Vencimento: ${formatarData(multipla.data_vencimento)}` : null,
+    dataAssumida && criados.length === 1
+      ? `\n📅 Data não identificada no documento — usei hoje. Pra corrigir: data ${codigoCurto(criados[0].id)} DD/MM/AAAA`
+      : dataAssumida
+        ? `\n📅 Data não identificada no documento — usei hoje. Pra corrigir: data [código] DD/MM/AAAA`
+        : null,
   ].filter(Boolean).join("\n");
 
   await sendTextMessage(chatId, confirmacao);
@@ -1928,10 +1949,14 @@ router.post("/zapi", async (req: Request, res: Response) => {
       }
     }
 
-    // Avisa que está processando quando recebe imagem ou documento
+    // Avisa que está processando quando recebe imagem ou documento. Best-effort:
+    // se a Z-API falhar aqui (ex.: Client-Token inválido), não pode travar o
+    // processamento do documento — o aviso é só cortesia, a leitura é o que importa.
     const temMidia = !!(payload.image?.imageUrl ?? payload.image?.url ?? payload.document?.documentUrl ?? payload.document?.url);
     if (temMidia) {
-      await sendTextMessage(chatId, "⏳ Analisando documento...");
+      await sendTextMessage(chatId, "⏳ Analisando documento...").catch((e) =>
+        console.error("[Webhook] Falha ao enviar aviso de processamento:", e)
+      );
     }
 
     try {
@@ -1940,6 +1965,22 @@ router.post("/zapi", async (req: Request, res: Response) => {
     if (!resultado) return;
 
     const { urlArquivo } = resultado;
+
+    // Documento sem data de emissão legível (foto cortada, cupom apagado, papel
+    // térmico desbotado): assume hoje em vez de travar o registro pedindo
+    // confirmação — na prática o documento chega no grupo no mesmo dia da
+    // compra. O flag `dataAssumida` sinaliza isso na resposta, pra ficar claro
+    // que a data não veio do documento e pode ser corrigida.
+    let dataAssumida = false;
+    if (resultado.multipla) {
+      if (!resultado.multipla.data_emissao) {
+        resultado.multipla.data_emissao = hojeISO();
+        dataAssumida = true;
+      }
+    } else if (resultado.extracted && !resultado.extracted.data_emissao) {
+      resultado.extracted.data_emissao = hojeISO();
+      dataAssumida = true;
+    }
 
     // ── Múltiplos itens (imagem/PDF com vários produtos) ─────────────────────
     if (resultado.multipla) {
@@ -1984,7 +2025,7 @@ router.post("/zapi", async (req: Request, res: Response) => {
         return;
       }
 
-      await registrarMultipla(chatId, multipla, urlArquivo, messageId);
+      await registrarMultipla(chatId, multipla, urlArquivo, messageId, dataAssumida);
       return;
     }
 
@@ -2026,11 +2067,14 @@ router.post("/zapi", async (req: Request, res: Response) => {
       `${emoji} *${extracted.tipo_lancamento === "receita" ? "Receita" : "Despesa"} registrada!*`,
       `📋 ${extracted.descricao}`,
       `💰 R$ ${brl(Number(extracted.valor_total))}`,
-      extracted.data_emissao ? `📅 Emissão: ${formatarData(extracted.data_emissao)}` : null,
+      extracted.data_emissao
+        ? `📅 Emissão: ${formatarData(extracted.data_emissao)}${dataAssumida ? " _(data de hoje — não veio no documento)_" : ""}`
+        : null,
       extracted.data_vencimento ? `⏰ Vencimento: ${formatarData(extracted.data_vencimento)}` : null,
       `🏷️ ${catNome}${semCategoriaUnica ? " _(automática — confira)_" : ""}`,
       `🔑 Código: *${codigoCurto(lancamento.id)}*`,
       semCategoriaUnica ? `🏷️ Categoria no automático — ajuste com: categoria ${codigoCurto(lancamento.id)} [nome]` : null,
+      dataAssumida ? `📅 Data não veio no documento — usei hoje. Corrija com: data ${codigoCurto(lancamento.id)} DD/MM/AAAA` : null,
       extracted.confianca !== "alta" ? `⚠️ Confiança *${extracted.confianca}* — confira os dados.` : null,
     ].filter(Boolean).join("\n");
 

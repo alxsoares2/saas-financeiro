@@ -8,7 +8,8 @@
     "start": "node dist/index.js",
     "test": "jest",
     "monitor-deploy": "tsx scripts/monitor-deploy.ts",
-    "import-estoque": "tsx scripts/import-estoque.ts"
+    "import-estoque": "tsx scripts/import-estoque.ts",
+    "comparar-modelos": "tsx scripts/comparar-modelos.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",

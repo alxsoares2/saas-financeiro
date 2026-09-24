@@ -5,20 +5,27 @@
 // de erro). Reaproveitado aqui de propósito, pra manter só um padrão de
 // chamada de IA com imagem no projeto inteiro.
 //
-// Modelo: gpt-4o-mini na triagem e na leitura de lista (texto — o modelo
-// mini já lê bem letra impressa/manuscrita). A CONTAGEM DE PRODUTO FÍSICO
-// usa gpt-4o (sem "mini") + detail:"high" — mesmo upgrade já usado pro
-// cupom fiscal em claude.ts (transcreverCupom): teste real mostrou o mini
-// separando mal objetos sobrepostos/parcialmente escondidos numa mesma
-// foto (contava 2 garrafas empilhadas como 1, ignorava uma parcialmente
-// coberta por outra) — limitação de visão computacional em fotos com
-// vários itens amontoados, não algo que ajuste de prompt sozinho resolve.
-// Custa mais por imagem, mas é exatamente a troca de precisão por custo
-// que faz sentido aqui (poucas fotos de produto físico por dia, cada uma
-// grava estoque real).
+// Modelo: MODELO_RAPIDO (gpt-6-luna) na triagem e na leitura de lista
+// (letra impressa/manuscrita o modelo rápido já lê bem). A CONTAGEM DE
+// PRODUTO FÍSICO usa MODELO_VISAO (gpt-6-sol) + detail:"high" — mesmo
+// upgrade usado pro cupom fiscal em claude.ts (transcreverCupom): teste real
+// com o modelo mini da geração anterior (gpt-4o-mini) mostrou ele separando
+// mal objetos sobrepostos/parcialmente escondidos numa mesma foto (contava 2
+// garrafas empilhadas como 1, ignorava uma parcialmente coberta por outra) —
+// limitação de visão em fotos com vários itens amontoados, não algo que
+// ajuste de prompt sozinho resolve. Custa mais por imagem, mas é a troca de
+// precisão por custo que faz sentido aqui (poucas fotos de produto físico
+// por dia, cada uma grava estoque real).
+//
+// Até set/2026 eram gpt-4o-mini / gpt-4o. Os GPT-6 raciocinam por padrão
+// e aí rejeitam temperature — reasoning_effort "none" mantém a chamada
+// direta e deixa usar temperature 0 (ver chamarVisao).
 import OpenAI from "openai";
 
 type MimeTypeImagem = "image/jpeg" | "image/png" | "image/webp" | "image/gif";
+
+const MODELO_VISAO = "gpt-6-sol";
+const MODELO_RAPIDO = "gpt-6-luna";
 
 let _client: OpenAI | null = null;
 
@@ -53,8 +60,9 @@ async function chamarVisao(
   if (opcoes?.detail) imageUrl.detail = opcoes.detail;
 
   const response = await getClient().chat.completions.create({
-    model: opcoes?.modelo ?? "gpt-4o-mini",
-    max_tokens: maxTokens,
+    model: opcoes?.modelo ?? MODELO_RAPIDO,
+    reasoning_effort: "none",
+    max_completion_tokens: maxTokens,
     // temperature 0: triagem/leitura/contagem são tarefas determinísticas
     // por natureza (a resposta certa não muda entre rodadas) — sem isso o
     // modelo usa a temperatura padrão da OpenAI, o que explicou um caso
@@ -125,7 +133,7 @@ export interface ResultadoExtracaoLista {
   itens: ItemListaExtraido[];
 }
 
-const LISTA_SYSTEM = `Você lê uma foto de lista de contagem de estoque de uma pizzaria (pode ser impressa/digitada ou
+export const LISTA_SYSTEM = `Você lê uma foto de lista de contagem de estoque de uma pizzaria (pode ser impressa/digitada ou
 manuscrita) e extrai cada produto com a quantidade contada. Retorne SOMENTE JSON válido, sem markdown:
 
 {
@@ -161,7 +169,7 @@ export async function extrairListaContagem(imageBuffer: Buffer, mimeType: MimeTy
 // {itens: [...]} da extração de lista, em vez de um resultado único: o
 // downstream (matching + confirmação em lote) já sabe lidar com N itens.
 
-function contagemFisicaSystem(referenciaPadroes: string): string {
+export function contagemFisicaSystem(referenciaPadroes: string): string {
   return `Você conta estoque físico de uma pizzaria a partir de uma foto (pode ser 1 produto só — ex: pilha de
 caixas do mesmo item — ou vários produtos diferentes juntos na mesma foto — ex: geladeira ou prateleira com
 itens variados).
@@ -214,9 +222,9 @@ export async function contarProdutosVisiveis(
   caption?: string
 ): Promise<ResultadoExtracaoLista> {
   const contexto = caption ? `Legenda enviada junto: "${caption}"` : "Identifique e conte os produtos visíveis nesta foto.";
-  // gpt-4o (não o -mini) + detail "high" — ver comentário no topo do arquivo.
+  // Modelo de visão (não o rápido) + detail "high" — ver comentário no topo do arquivo.
   const raw = await chamarVisao(contagemFisicaSystem(referenciaPadroes), imageBuffer, mimeType, contexto, 1024, {
-    modelo: "gpt-4o",
+    modelo: MODELO_VISAO,
     detail: "high",
   });
   try {
