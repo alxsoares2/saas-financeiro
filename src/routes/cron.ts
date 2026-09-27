@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import * as supabase from "../db/supabase.js";
 import { getTenants } from "../config/tenants.js";
+import { exigirToken } from "../middleware/auth.js";
 
 const router = Router();
 
@@ -16,22 +17,6 @@ function calcularVencimento(ano: number, mes: number, diaDesejado: number): Date
   const ultimoDia = obterUltimoDiaDoMes(ano, mes);
   const diaReal = Math.min(diaDesejado, ultimoDia);
   return new Date(ano, mes, diaReal);
-}
-
-// ============================================================================
-// MIDDLEWARE: Validar CRON_SECRET
-// ============================================================================
-
-function validarCronSecret(req: Request, res: Response, next: () => void): void {
-  const headerAuth = req.headers.authorization;
-  const secret = process.env.CRON_SECRET;
-
-  if (!secret || headerAuth !== `Bearer ${secret}`) {
-    res.status(401).json({ error: "Unauthorized — invalid or missing CRON_SECRET" });
-    return;
-  }
-
-  next();
 }
 
 // ============================================================================
@@ -122,7 +107,7 @@ async function gerarRecorrentes() {
   };
 }
 
-router.post("/gerar-recorrentes", validarCronSecret, async (req: Request, res: Response) => {
+router.post("/gerar-recorrentes", exigirToken, async (req: Request, res: Response) => {
   try {
     // Roda pra cada loja (multi-tenant), cada uma no seu banco
     const tenants = getTenants();
@@ -249,7 +234,7 @@ async function enviarAlertas() {
   };
 }
 
-router.post("/alertas-vencimentos", validarCronSecret, async (req: Request, res: Response) => {
+router.post("/alertas-vencimentos", exigirToken, async (req: Request, res: Response) => {
   try {
     // Roda pra cada loja (multi-tenant), cada uma no seu banco
     const tenants = getTenants();

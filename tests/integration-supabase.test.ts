@@ -15,13 +15,17 @@
 import * as supabase from "../src/db/supabase";
 import { calcularDRE } from "../src/services/dre";
 
-describe("Integração com Supabase Real", () => {
+// Grava no banco de verdade — só roda quando pedido explicitamente:
+//   RODAR_INTEGRACAO=1 npm test -- integration-supabase
+// (o beforeAll roda mesmo com os `it` pulados, então o gate é no describe)
+const describeIntegracao = process.env.RODAR_INTEGRACAO === "1" ? describe : describe.skip;
+
+describeIntegracao("Integração com Supabase Real", () => {
   const marcador = "TESTE_AUTOMATIZADO_" + Date.now();
   let lancamentosTesteCriados: string[] = [];
   let naoConciliadosTesteCriados: string[] = [];
 
-  // Skip por padrão — rodar com: npm test -- --testNamePattern="Integração com Supabase Real"
-  // E ter as env vars SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY configuradas
+  // Precisa também das env vars SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY
   const skipIfNoSupabase = process.env.SUPABASE_URL ? it : it.skip;
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -60,7 +64,7 @@ describe("Integração com Supabase Real", () => {
           descricao: marcador + " — Boleto de teste para valor_pago",
           fornecedor: marcador,
           data_emissao: new Date().toISOString().substring(0, 10),
-          cnpj_cpf: null,
+          cnpj_cpf: undefined,
           categoria_sugerida: "TESTE",
           confianca: "alta",
         },
@@ -99,7 +103,7 @@ describe("Integração com Supabase Real", () => {
           descricao: marcador + " — Boleto para pagamento parcial",
           fornecedor: marcador,
           data_emissao: new Date().toISOString().substring(0, 10),
-          cnpj_cpf: null,
+          cnpj_cpf: undefined,
           categoria_sugerida: "TESTE",
           confianca: "alta",
         },
@@ -178,7 +182,7 @@ describe("Integração com Supabase Real", () => {
           descricao: marcador + " — Boleto 1 de combinação",
           fornecedor: marcador,
           data_emissao: new Date().toISOString().substring(0, 10),
-          cnpj_cpf: null,
+          cnpj_cpf: undefined,
           categoria_sugerida: "TESTE",
           confianca: "alta",
         },
@@ -196,7 +200,7 @@ describe("Integração com Supabase Real", () => {
           descricao: marcador + " — Boleto 2 de combinação",
           fornecedor: marcador,
           data_emissao: new Date().toISOString().substring(0, 10),
-          cnpj_cpf: null,
+          cnpj_cpf: undefined,
           categoria_sugerida: "TESTE",
           confianca: "alta",
         },
